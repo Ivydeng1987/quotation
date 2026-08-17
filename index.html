@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow, noarchive">
+    <title>报价系统 v1.0</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style/dist/xlsx.bundle.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f1f5f9; padding: 16px; color: #1e293b; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .lock-screen { position: fixed; inset: 0; background: linear-gradient(135deg, #0e4b6e, #1a6d97); display: flex; align-items: center; justify-content: center; z-index: 9999; flex-direction: column; gap: 24px; }
+        .lock-screen .lock-box { background: white; padding: 32px 28px; border-radius: 24px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); text-align: center; max-width: 380px; width: 90%; }
+        .lock-screen .lock-box h2 { font-size: 22px; color: #0e4b6e; margin-bottom: 6px; }
+        .lock-screen .lock-box input { width: 100%; padding: 12px 16px; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 16px; outline: none; text-align: center; }
+        .lock-screen .lock-box button { margin-top: 14px; width: 100%; padding: 12px; background: #0e4b6e; color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; }
+        .lock-screen .lock-box button:disabled { background: #94a3b8; cursor: not-allowed; }
+
+        .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; background: white; padding: 12px 18px; border-radius: 14px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
+        .header h1 { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        .header h1 span { background: #0e4b6e; color: white; font-size: 12px; padding: 2px 10px; border-radius: 30px; font-weight: 400; }
+        .header-right { display: flex; align-items: center; gap: 10px; font-size: 13px; flex-wrap: wrap; }
+        .sync-status { font-weight: 500; font-size: 12px; padding: 4px 12px; border-radius: 20px; }
+        .sync-status.success { background: #dcfce7; color: #16a34a; }
+        .sync-status.error { background: #fee2e2; color: #dc2626; }
+
+        .btn { padding: 6px 14px; border: none; border-radius: 30px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 4px; }
+        .btn-primary { background: #0e4b6e; color: white; }
+        .btn-primary:hover { background: #0a3a55; }
+        .btn-outline { background: white; border: 1px solid #e2e8f0; color: #475569; }
+        .btn-outline:hover { background: #f1f5f9; }
+        .btn-danger { background: #fee2e2; color: #dc2626; }
+        .btn-sm { padding: 4px 10px; font-size: 11px; }
+
+        .card { background: white; border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
+        .card h2 { font-size: 15px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 12px; font-weight: 500; color: #475569; margin-bottom: 3px; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; font-family: inherit; }
+        .form-group input:focus, .form-group textarea:focus, .form-group select:focus { border-color: #0e4b6e; outline: none; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+        .series-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+        .series-tab { padding: 8px 18px; border: 1px solid #e2e8f0; border-radius: 30px; background: white; cursor: pointer; font-size: 13px; }
+        .series-tab.active { background: #0e4b6e; color: white; border-color: #0e4b6e; }
+
+        .items-table { width: 100%; border-collapse: collapse; margin-bottom: 6px; font-size: 12px; }
+        .items-table th { background: #f8fafc; padding: 6px 8px; text-align: left; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0; }
+        .items-table td { padding: 4px; border-bottom: 1px solid #f1f5f9; }
+        .items-table input, .items-table textarea { width: 100%; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; font-family: inherit; }
+        .items-table .del-row { color: #dc2626; cursor: pointer; background: none; border: none; font-size: 14px; }
+        .items-table .seq-cell { text-align: center; color: #94a3b8; }
+
+        .table-wrapper { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); overflow-x: auto; }
+        table.list-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 900px; }
+        table.list-table th { background: #f8fafc; padding: 8px 10px; text-align: left; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0; }
+        table.list-table td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+        table.list-table tr:hover td { background: #fafbfc; }
+        .order-link { color: #0e4b6e; font-weight: 600; cursor: pointer; text-decoration: underline; }
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 30px; font-size: 11px; font-weight: 500; }
+        .badge-overdue { background: #fee2e2; color: #dc2626; }
+        .badge-series { background: #dbeafe; color: #2563eb; }
+
+        .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
+        .toolbar input[type="text"] { padding: 6px 14px; border: 1px solid #e2e8f0; border-radius: 30px; font-size: 12px; outline: none; width: 200px; }
+
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: white; border-radius: 16px; padding: 20px 24px; width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2); }
+        .modal h2 { font-size: 16px; margin-bottom: 14px; }
+        .mini-list { border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 14px; max-height: 280px; overflow-y: auto; }
+        .mini-list-item { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+        .mini-list-item:last-child { border-bottom: none; }
+        .mini-list-item .info b { display: block; }
+        .mini-list-item .info span { color: #94a3b8; font-size: 11px; }
+
+        .toast { position: fixed; bottom: 20px; right: 20px; background: #0e4b6e; color: white; padding: 10px 20px; border-radius: 50px; font-size: 13px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); z-index: 2000; opacity: 0; transform: translateY(20px); transition: all 0.3s ease; }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.success { background: #16a34a; }
+        .toast.error { background: #dc2626; }
+        .hidden { display: none !important; }
+
+        @media (max-width: 640px) {
+            .form-row, .form-row-3 { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="lock-screen" id="lockScreen">
+        <div class="lock-box">
+            <h2>🔒 报价系统</h2>
+            <input type="password" id="passwordInput" placeholder="请输入密码" autofocus>
+            <button id="unlockBtn" disabled>正在校验云端密码...</button>
+        </div>
+    </div>
+
+    <div class="container hidden" id="mainContent">
+        <div class="header">
+            <h1>💰 报价系统 <span>v1.0</span></h1>
+            <div class="header-right">
+                <span class="sync-status success" id="syncStatus">⏳ 载入中...</span>
+                <button class="btn btn-outline" onclick="openCustomerModal()">👤 客户资料库</button>
+                <button class="btn btn-outline" onclick="backupAllData()">💾 备份全部数据</button>
+                <button class="btn btn-outline" onclick="changePassword()">🔑 改密</button>
+                <button class="btn btn-outline" onclick="lockScreen()">🔒 锁定</button>
+            </div>
+        </div>
+
+        <div id="listView">
+            <div class="toolbar">
+                <input type="text" id="searchInput" placeholder="🔍 搜索客户/单号..." oninput="renderList()">
+                <select id="filterSeries" onchange="renderList()">
+                    <option value="">全部系列</option>
+                    <option value="数控刀具">数控刀具</option>
+                    <option value="塑料切粒刀">塑料切粒刀</option>
+                    <option value="微型磁力泵">微型磁力泵</option>
+                </select>
+                <label style="display:flex;align-items:center;gap:6px;font-size:12px;"><input type="checkbox" id="showDeletedCheckbox" onchange="renderList()" style="width:auto;"> 显示已删除</label>
+                <div style="flex:1;"></div>
+                <button class="btn btn-outline" onclick="openPriceHistoryModal()">📊 历史报价查询</button>
+                <button class="btn btn-primary" onclick="openQuoteDetail(null)">➕ 新建报价单</button>
+            </div>
+            <div class="table-wrapper">
+                <table class="list-table">
+                    <thead>
+                        <tr>
+                            <th>报价单号</th>
+                            <th>系列</th>
+                            <th>客户</th>
+                            <th>国家</th>
+                            <th>币种</th>
+                            <th>报价日期</th>
+                            <th>货品数</th>
+                            <th>备注</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="quoteTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="detailView" class="hidden">
+            <div class="card">
+                <h2 id="detailTitle">📝 新建报价单</h2>
+
+                <div class="form-group">
+                    <label>产品系列 *</label>
+                    <div class="series-tabs" id="seriesTabs">
+                        <div class="series-tab" data-series="数控刀具" onclick="selectSeries('数控刀具')">数控刀具</div>
+                        <div class="series-tab" data-series="塑料切粒刀" onclick="selectSeries('塑料切粒刀')">塑料切粒刀</div>
+                        <div class="series-tab" data-series="微型磁力泵" onclick="selectSeries('微型磁力泵')">微型磁力泵</div>
+                    </div>
+                </div>
+
+                <div class="form-row-3">
+                    <div class="form-group"><label>报价单号</label><input type="text" id="fQuoteNo" disabled placeholder="保存时自动生成"></div>
+                    <div class="form-group"><label>报价日期</label><input type="date" id="fQuoteDate"></div>
+                    <div class="form-group"></div>
+                </div>
+
+                <div class="form-group">
+                    <label>选择客户（从客户资料库自动填充，也可手动填写）</label>
+                    <select id="fCustomerSelect" onchange="fillCustomerFromSelect()">
+                        <option value="">-- 手动填写 / 选择已有客户 --</option>
+                    </select>
+                </div>
+                <div class="form-row-3">
+                    <div class="form-group"><label>客户 *</label><input type="text" id="fCustomerCompany"></div>
+                    <div class="form-group"><label>国家</label><input type="text" id="fCustomerCountry"></div>
+                    <div class="form-group">
+                        <label>币种</label>
+                        <select id="fCurrencySelect" onchange="toggleCurrencyCustom()">
+                            <option value="USD">USD</option>
+                            <option value="CNY">CNY（人民币）</option>
+                            <option value="THB">THB（泰铢）</option>
+                            <option value="HKD">HKD</option>
+                            <option value="EUR">EUR</option>
+                            <option value="custom">手动输入...</option>
+                        </select>
+                        <input type="text" id="fCurrencyCustom" placeholder="请输入币种代码" style="margin-top:6px;display:none;" oninput="if(currentSeries) renderItemsTableHead();">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>货品明细</label>
+                    <table class="items-table" id="itemsTable">
+                        <thead id="itemsTableHead"></thead>
+                        <tbody id="itemsTableBody"></tbody>
+                    </table>
+                    <button class="btn btn-outline btn-sm" onclick="addItemRow()">➕ 添加一行</button>
+                </div>
+
+                <div class="form-group"><label>Remark（备注条款，已按系列预填默认文字，可自由修改，会出现在导出的报价单上）</label><textarea id="fRemark" rows="6"></textarea></div>
+                <div class="form-group"><label>内部备注（仅自己看，不会出现在导出的报价单上）</label><textarea id="fInternalNote" rows="2" placeholder="比如：客户还在比价、这个价格是特批的..."></textarea></div>
+
+                <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+                    <button class="btn btn-primary" id="saveQuoteBtn" onclick="saveQuote()">💾 保存报价单</button>
+                    <button class="btn btn-outline" onclick="exportQuote()">📥 导出报价单</button>
+                    <button class="btn btn-outline" id="copyQuoteBtn" onclick="copyCurrentQuote()" style="display:none;">📋 复制为新报价单</button>
+                    <button class="btn btn-outline" onclick="backToList()">← 返回列表</button>
+                    <button class="btn btn-danger" id="deleteQuoteBtn" onclick="deleteCurrentQuote()" style="display:none;">🗑️ 删除</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="customerModal">
+        <div class="modal">
+            <h2>👤 客户资料库</h2>
+            <div class="mini-list" id="customerList"></div>
+            <div class="form-row-3">
+                <div class="form-group"><label>客户名称</label><input type="text" id="newCustCompany"></div>
+                <div class="form-group"><label>国家</label><input type="text" id="newCustCountry"></div>
+                <div class="form-group"><label>联系人</label><input type="text" id="newCustContact"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>邮箱</label><input type="email" id="newCustEmail"></div>
+                <div class="form-group"><label>电话</label><input type="text" id="newCustPhone"></div>
+            </div>
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button class="btn btn-outline" onclick="closeModal('customerModal')">关闭</button>
+                <button class="btn btn-primary" onclick="addCustomer()">➕ 添加客户</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="priceHistoryModal">
+        <div class="modal" style="max-width:800px;">
+            <h2>📊 历史报价查询</h2>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>客户</label>
+                    <select id="phCustomerSelect"><option value="">-- 请选择客户 --</option></select>
+                </div>
+                <div class="form-group">
+                    <label>品名/型号关键词（留空则不限）</label>
+                    <input type="text" id="phProductKeyword" placeholder="如：drills">
+                </div>
+            </div>
+            <div style="display:flex; gap:10px; margin-bottom:14px;">
+                <button class="btn btn-primary" onclick="runPriceHistoryQuery()">🔍 查询</button>
+                <button class="btn btn-outline" onclick="closeModal('priceHistoryModal')">关闭</button>
+            </div>
+            <div class="table-wrapper">
+                <table class="list-table" style="min-width:600px;">
+                    <thead>
+                        <tr><th>报价日期</th><th>报价单号</th><th>系列</th><th>品名/型号</th><th>规格</th><th>单价</th></tr>
+                    </thead>
+                    <tbody id="priceHistoryBody"><tr><td colspan="6" style="padding:20px;text-align:center;">请选择客户后点查询</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="subFieldModal">
+        <div class="modal" style="max-width:480px;">
+            <h2 id="subFieldModalTitle">编辑规格</h2>
+            <div id="subFieldModalBody"></div>
+            <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px;">
+                <button class="btn btn-outline" onclick="closeModal('subFieldModal')">取消</button>
+                <button class="btn btn-primary" onclick="confirmSubFieldModal()">✅ 确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // ====== 配置信息 ======
+        const STORAGE_KEY = 'quotation_system_v1';
+        const BIN_ID = '6a82ce05da38895dfeee1354';  // 报价系统专用Bin
+        const CRM_BIN_ID = '69ca405a36566621a85fc22b';  // 外贸CRM系统Bin（只读，用于拉取客户资料，同时供CRM反查报价记录）
+        const WORKER_URL = 'https://sunlit-proxy.ivy-3fc.workers.dev';
+        const ACCESS_TOKEN = 'RBhCP4O1yvwxN7nB9oMoQCzuj2ZnF3M9daOE76fRVtk';
+
+        // 己方固定信息（三个系列表头都用这个）
+        const SUPPLIER = {
+            name: 'Shenzhen Sunlit Tools Co., Ltd.',
+            contact: 'Ivy Deng',
+            email: 'ivydeng@sunlittools.com'
+        };
+
+        // 三个产品系列的模板配置：表格列结构 + 默认Remark文字 + Why Choose Us文案
+        const SERIES_CONFIG = {
+            '数控刀具': {
+                columns: [
+                    { key: 'name', label: 'Product', width: '20%', excelWidth: 22 },
+                    { key: 'spec', label: 'Specification', width: '18%', excelWidth: 16 },
+                    { key: 'code', label: 'SZSUNLIT Code', width: '16%', excelWidth: 16 },
+                    { key: 'material', label: 'Material/Coating', width: '16%', excelWidth: 16 },
+                    { key: 'price', label: 'Unit Price', width: '15%', excelWidth: 14 },
+                    { key: 'moq', label: 'MOQ', width: '10%', excelWidth: 8 }
+                ],
+                defaultRemark: `Trade Terms: FOB Shenzhen
+Payment Terms: 30% deposit, balance before shipment
+Lead time: 35 days
+Price Validity: 20 days
+OEM/ODM: Available`,
+                whyChooseUs: [
+                    'Proven alternative to leading international brands',
+                    'Stable performance in real machining applications',
+                    'Better cost-performance balance',
+                    'Flexible support for custom and small batch orders',
+                    'Fast response and reliable delivery'
+                ]
+            },
+            '塑料切粒刀': {
+                columns: [
+                    { key: 'name', label: 'Product', width: '20%', excelWidth: 22 },
+                    { key: 'spec', label: 'Specification/Drawing NO.', width: '20%', excelWidth: 20 },
+                    { key: 'material', label: 'Material', width: '16%', excelWidth: 14 },
+                    { key: 'compatibleSystem', label: 'Compatible System', width: '16%', excelWidth: 16 },
+                    { key: 'price', label: 'Unit Price', width: '14%', excelWidth: 14 },
+                    { key: 'moq', label: 'MOQ', width: '10%', excelWidth: 8 }
+                ],
+                defaultRemark: `Trade Terms: FOB Shenzhen
+Payment Terms: 30% deposit, balance before shipment
+Lead time: 35 days
+Price Validity: 20 days
+OEM/ODM: Available
+Drawing confirmation required before production.
+Final dimensions shall be subject to the approved drawing.`,
+                whyChooseUs: [
+                    'Precision Grinding Accuracy Down to 0.002 mm',
+                    'Ceramic, Carbide & TiC Material Solutions',
+                    'OEM-Compatible Replacement Solutions',
+                    'Proven Performance in Continuous Pelletizing',
+                    'Custom Engineering for Specific Applications'
+                ]
+            },
+            '微型磁力泵': {
+                columns: [
+                    { key: 'name', label: 'Model', width: '14%', excelWidth: 14 },
+                    { key: 'spec', label: 'Specification', width: '26%', excelWidth: 32, multiline: true, subFields: [
+                        { key: 'material', label: 'Material' },
+                        { key: 'interface', label: 'Interface' },
+                        { key: 'accessories', label: 'Accessories' }
+                    ] },
+                    { key: 'keySpec', label: 'Key Specification', width: '26%', excelWidth: 32, multiline: true, subFields: [
+                        { key: 'medium', label: 'Medium' },
+                        { key: 'flow', label: 'Flow Rate' },
+                        { key: 'pressure', label: 'Pressure' },
+                        { key: 'viscosity', label: 'Viscosity' },
+                        { key: 'particle', label: 'Particle Size' },
+                        { key: 'temperature', label: 'Temperature' },
+                        { key: 'additionalCondition', label: 'Additional Conditions' }
+                    ] },
+                    { key: 'price', label: 'Unit Price', width: '12%', excelWidth: 12 },
+                    { key: 'qty', label: 'Qty', width: '10%', excelWidth: 8 },
+                    { key: 'amount', label: 'Amount', width: '12%', excelWidth: 12, readonly: true }
+                ],
+                defaultRemark: `Trade Terms: FOB Shenzhen
+Payment Terms: 30% deposit, balance before shipment
+Lead time: 35 days
+Price Validity: 20 days
+OEM/ODM: Available`,
+                whyChooseUs: [
+                    'Sealless Magnetic Drive — Zero Leakage',
+                    'Engineered for Continuous Industrial Operation',
+                    'Wide Pressure & Temperature Capability',
+                    'Long Service Life & Stable Performance',
+                    'OEM Customization & Engineering Support'
+                ]
+            }
+        };
+
+        let quotes = [];
+        let customers = [];
+        let APP_PASSWORD = localStorage.getItem('my_app_pwd') || 'admin123';
+        let currentQuoteNo = null;
+        let currentSeries = null;
+
+        // ====== 锁屏 ======
+        document.getElementById('unlockBtn').onclick = function() {
+            if (document.getElementById('passwordInput').value === APP_PASSWORD) {
+                document.getElementById('lockScreen').style.display = 'none';
+                document.getElementById('mainContent').classList.remove('hidden');
+                renderList();
+            } else alert('密码错误');
+        };
+        document.getElementById('passwordInput').addEventListener('keydown', e => { if(e.key === 'Enter') document.getElementById('unlockBtn').click(); });
+
+        function lockScreen() {
+            document.getElementById('lockScreen').style.display = 'flex';
+            document.getElementById('mainContent').classList.add('hidden');
+            document.getElementById('passwordInput').value = '';
+        }
+        function changePassword() {
+            let p = prompt("新密码：");
+            if (p && p.trim()) {
+                APP_PASSWORD = p.trim();
+                localStorage.setItem('my_app_pwd', APP_PASSWORD);
+                pushCloudData();
+                showToast('密码已改，已同步到云端');
+            }
+        }
+
+        // ====== 云端同步 ======
+        async function getCloudData() {
+            try {
+                let res = await fetch(`${WORKER_URL}/bin/${BIN_ID}/latest`, { headers: { 'X-Access-Token': ACCESS_TOKEN } });
+                if (res.ok) {
+                    let json = await res.json();
+                    let r = json.record;
+                    if (r && typeof r === 'object' && !Array.isArray(r)) {
+                        return {
+                            password: r.password || null,
+                            quotes: Array.isArray(r.quotes) ? r.quotes : [],
+                            customers: Array.isArray(r.customers) ? r.customers : []
+                        };
+                    }
+                    return { password: null, quotes: [], customers: [] };
+                } else {
+                    console.log(`拉取失败，状态码: ${res.status}`);
+                }
+            } catch(e) { console.log("拉取云端发生网络/解析错误:", e); }
+            return null;
+        }
+
+        async function pushCloudData() {
+            try {
+                let payload = { password: APP_PASSWORD, quotes, customers };
+                let res = await fetch(`${WORKER_URL}/bin/${BIN_ID}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-Access-Token': ACCESS_TOKEN },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) return true;
+                console.error("上传失败:", res.status);
+                return false;
+            } catch(e) { console.error("上传错误:", e); return false; }
+        }
+
+        // ====== 只读拉取CRM客户资料（用于客户下拉选择）======
+        let crmCustomerCache = null;
+        async function fetchCrmCustomers() {
+            if (crmCustomerCache) return crmCustomerCache;
+            try {
+                let res = await fetch(`${WORKER_URL}/bin/${CRM_BIN_ID}/latest`, { headers: { 'X-Access-Token': ACCESS_TOKEN } });
+                if (res.ok) {
+                    let json = await res.json();
+                    let r = json.record;
+                    if (r && typeof r === 'object' && Array.isArray(r.clients)) {
+                        crmCustomerCache = r.clients.filter(c => !c.deleted && !c.inPublicPool);
+                        return crmCustomerCache;
+                    }
+                }
+            } catch(e) { console.error('拉取CRM客户资料失败:', e); }
+            crmCustomerCache = [];
+            return crmCustomerCache;
+        }
+
+        async function preloadCloud() {
+            let cloud = await getCloudData();
+            if (cloud) {
+                quotes = cloud.quotes;
+                customers = cloud.customers;
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ quotes, customers }));
+                if (cloud.password) {
+                    APP_PASSWORD = cloud.password;
+                    localStorage.setItem('my_app_pwd', APP_PASSWORD);
+                }
+                document.getElementById('syncStatus').innerText = "✅ 已同步云端";
+                document.getElementById('syncStatus').className = "sync-status success";
+            } else {
+                let local = localStorage.getItem(STORAGE_KEY);
+                if (local) {
+                    let d = JSON.parse(local);
+                    quotes = d.quotes || []; customers = d.customers || [];
+                    document.getElementById('syncStatus').innerText = "⚠️ 本地数据(云端无数据)";
+                } else {
+                    document.getElementById('syncStatus').innerText = "📂 空系统";
+                }
+                document.getElementById('syncStatus').className = "sync-status error";
+            }
+            let btn = document.getElementById('unlockBtn');
+            btn.disabled = false;
+            btn.innerText = "解锁";
+        }
+        preloadCloud();
+
+        function saveAll() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({ quotes, customers }));
+            pushCloudData();
+        }
+
+        function backupAllData() {
+            let payload = { exportedAt: new Date().toISOString(), quotes, customers };
+            let blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            let url = URL.createObjectURL(blob);
+            let a = document.createElement('a');
+            a.href = url;
+            a.download = `报价系统_备份_${getToday()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('备份文件已下载');
+        }
+
+        // ====== 工具函数 ======
+        function getToday() { return new Date().toISOString().split('T')[0]; }
+        function formatDate(d) { return d ? new Date(d).toLocaleDateString('zh-CN') : '—'; }
+        function escapeHtml(s) {
+            if (s === undefined || s === null) return '';
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+        function showToast(msg, type='success') {
+            let el = document.getElementById('toast');
+            el.innerText = msg; el.className = `toast ${type}`; el.classList.add('show');
+            clearTimeout(el._timer); el._timer = setTimeout(()=>el.classList.remove('show'), 2500);
+        }
+        function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+        // ====== 客户资料库：优先用CRM系统的客户资料，CRM没有的可以在这里手动补充 ======
+        function openCustomerModal() {
+            renderCustomerList();
+            document.getElementById('customerModal').classList.add('active');
+        }
+        function renderCustomerList() {
+            let html = customers.map((c, i) => `
+                <div class="mini-list-item">
+                    <div class="info"><b>${escapeHtml(c.company)}</b><span>${escapeHtml(c.country) || '—'} ｜ ${escapeHtml(c.contact) || '—'} ｜ ${escapeHtml(c.email) || '—'}</span></div>
+                    <button class="btn btn-danger btn-sm" onclick="deleteCustomer(${i})">删除</button>
+                </div>
+            `).join('');
+            document.getElementById('customerList').innerHTML = html || '<div class="mini-list-item">暂无手动补充的客户（CRM里已有的客户资料，直接在报价单里的下拉框选就行，不需要在这里重复添加）</div>';
+        }
+        async function addCustomer() {
+            let company = document.getElementById('newCustCompany').value.trim();
+            if (!company) { showToast('请填写客户名称', 'error'); return; }
+            customers.push({
+                id: 'c_' + Date.now(),
+                company,
+                country: document.getElementById('newCustCountry').value.trim(),
+                contact: document.getElementById('newCustContact').value.trim(),
+                email: document.getElementById('newCustEmail').value.trim(),
+                phone: document.getElementById('newCustPhone').value.trim()
+            });
+            saveAll();
+            renderCustomerList();
+            await populateCustomerSelect();
+            ['newCustCompany','newCustCountry','newCustContact','newCustEmail','newCustPhone'].forEach(id => document.getElementById(id).value = '');
+            showToast('客户已添加');
+        }
+        async function deleteCustomer(idx) {
+            if (!confirm('删除这个客户资料？')) return;
+            customers.splice(idx, 1);
+            saveAll();
+            renderCustomerList();
+            await populateCustomerSelect();
+        }
+        // 下拉框合并两个来源：CRM系统的客户（主要来源）+ 本系统手动补充的客户（CRM里还没有的）
+        async function populateCustomerSelect() {
+            let sel = document.getElementById('fCustomerSelect');
+            let current = sel.value;
+            let crmClients = await fetchCrmCustomers();
+            let crmOptions = crmClients.map(c => `<option value="crm:${c.id}">${escapeHtml(c.company)}（CRM）</option>`).join('');
+            let localOptions = customers.map(c => `<option value="local:${c.id}">${escapeHtml(c.company)}（手动补充）</option>`).join('');
+            sel.innerHTML = '<option value="">-- 手动填写 / 选择已有客户 --</option>' + crmOptions + localOptions;
+            sel.value = current;
+        }
+        async function fillCustomerFromSelect() {
+            let val = document.getElementById('fCustomerSelect').value;
+            if (!val) return;
+            let [source, id] = val.split(':');
+            let c;
+            if (source === 'crm') {
+                let crmClients = await fetchCrmCustomers();
+                c = crmClients.find(x => x.id === id);
+            } else {
+                c = customers.find(x => x.id === id);
+            }
+            if (c) {
+                document.getElementById('fCustomerCompany').value = c.company || '';
+                document.getElementById('fCustomerCountry').value = c.country || '';
+            }
+        }
+
+        // ====== 货品明细：根据产品系列动态渲染不同列 ======
+        function selectSeries(series, keepItems) {
+            if (currentSeries === series) return;
+            if (!keepItems && document.getElementById('itemsTableBody').children.length > 0) {
+                if (!confirm('切换产品系列会清空当前已填写的货品明细，确定切换吗？')) return;
+            }
+            currentSeries = series;
+            document.querySelectorAll('.series-tab').forEach(t => t.classList.toggle('active', t.dataset.series === series));
+            renderItemsTableHead();
+            document.getElementById('itemsTableBody').innerHTML = '';
+            if (!document.getElementById('fRemark').dataset.userEdited) {
+                document.getElementById('fRemark').value = SERIES_CONFIG[series].defaultRemark;
+            }
+            addItemRow();
+        }
+
+        function renderItemsTableHead() {
+            let cfg = SERIES_CONFIG[currentSeries];
+            let currency = getCurrencyValue();
+            let cols = cfg.columns.map(c => {
+                let label = (c.key === 'price' || c.key === 'amount') ? `${c.label} (${currency})` : c.label;
+                return `<th style="width:${c.width}">${label}</th>`;
+            }).join('');
+            document.getElementById('itemsTableHead').innerHTML = `<tr><th style="width:5%">No.</th>${cols}<th style="width:5%"></th></tr>`;
+        }
+
+        function addItemRow(item) {
+            item = item || {};
+            let cfg = SERIES_CONFIG[currentSeries];
+            let tbody = document.getElementById('itemsTableBody');
+            let seq = tbody.children.length + 1;
+            let tr = document.createElement('tr');
+            let cellsHtml = cfg.columns.map(c => {
+                let val = escapeHtml(item[c.key] || '');
+                if (c.subFields) {
+                    let subVal = item[c.key + 'Sub'] || {};
+                    return `<td>
+                        <div class="item-${c.key}-preview" style="white-space:pre-wrap;font-size:11px;max-height:80px;overflow-y:auto;padding:4px;border:1px solid #e2e8f0;border-radius:6px;min-height:40px;">${val}</div>
+                        <input type="hidden" class="item-${c.key}" value="${val}">
+                        <input type="hidden" class="item-${c.key}-sub" value='${escapeHtml(JSON.stringify(subVal))}'>
+                        <button type="button" class="btn btn-outline btn-sm" style="margin-top:4px;width:100%;" onclick="openSubFieldModal(this.closest('tr'), '${c.key}')">✏️ 编辑</button>
+                    </td>`;
+                }
+                if (c.readonly) return `<td><input type="text" class="item-${c.key}" value="${val}" readonly style="background:#f8fafc;"></td>`;
+                if (c.multiline) return `<td><textarea class="item-${c.key}" rows="3">${val}</textarea></td>`;
+                let oninput = (c.key === 'price' || c.key === 'qty') ? ' oninput="updateAmountIfNeeded(this)"' : '';
+                return `<td><input type="text" class="item-${c.key}" value="${val}"${oninput}></td>`;
+            }).join('');
+            tr.innerHTML = `<td class="seq-cell">${seq}</td>${cellsHtml}<td><button class="del-row" onclick="this.closest('tr').remove(); renumberRows();">🗑️</button></td>`;
+            tbody.appendChild(tr);
+        }
+        function renumberRows() {
+            let rows = document.querySelectorAll('#itemsTableBody tr');
+            rows.forEach((r, i) => { r.querySelector('.seq-cell').innerText = i + 1; });
+        }
+
+        // ====== 子字段编辑弹窗（磁力泵的Specification/Key Specification用）======
+        let subFieldModalTarget = null;
+        function openSubFieldModal(rowEl, columnKey) {
+            let cfg = SERIES_CONFIG[currentSeries];
+            let colConfig = cfg.columns.find(c => c.key === columnKey);
+            if (!colConfig || !colConfig.subFields) return;
+            subFieldModalTarget = { rowEl, columnKey, colConfig };
+
+            let hiddenSub = rowEl.querySelector('.item-' + columnKey + '-sub');
+            let subValues = {};
+            try { subValues = hiddenSub.value ? JSON.parse(hiddenSub.value) : {}; } catch(e) { subValues = {}; }
+
+            let html = colConfig.subFields.map(sf => `
+                <div class="form-group">
+                    <label>${sf.label}</label>
+                    <input type="text" class="subfield-input" data-key="${sf.key}" value="${escapeHtml(subValues[sf.key] || '')}">
+                </div>
+            `).join('');
+            document.getElementById('subFieldModalBody').innerHTML = html;
+            document.getElementById('subFieldModalTitle').innerText = `编辑 ${colConfig.label}`;
+            document.getElementById('subFieldModal').classList.add('active');
+        }
+        function confirmSubFieldModal() {
+            if (!subFieldModalTarget) return;
+            let { rowEl, columnKey, colConfig } = subFieldModalTarget;
+            let subValues = {};
+            let lines = [];
+            document.querySelectorAll('#subFieldModalBody .subfield-input').forEach(inp => {
+                let key = inp.dataset.key;
+                let val = inp.value.trim();
+                subValues[key] = val;
+                let label = colConfig.subFields.find(sf => sf.key === key).label;
+                lines.push(`${label}：${val}`);
+            });
+            let composedText = lines.join('\n');
+            rowEl.querySelector('.item-' + columnKey).value = composedText;
+            rowEl.querySelector('.item-' + columnKey + '-sub').value = JSON.stringify(subValues);
+            rowEl.querySelector('.item-' + columnKey + '-preview').innerText = composedText;
+            closeModal('subFieldModal');
+        }
+
+        // 泵系列有Qty*Unit Price=Amount的自动计算，其他系列没有Qty/Amount列，这个函数对那些系列不会做任何事
+        function updateAmountIfNeeded(inputEl) {
+            let row = inputEl.closest('tr');
+            let priceInput = row.querySelector('.item-price');
+            let qtyInput = row.querySelector('.item-qty');
+            let amountInput = row.querySelector('.item-amount');
+            if (!priceInput || !qtyInput || !amountInput) return;
+            let price = parseFloat(priceInput.value) || 0;
+            let qty = parseFloat(qtyInput.value) || 0;
+            let amount = price * qty;
+            amountInput.value = amount ? amount.toFixed(2) : '';
+        }
+        function getItemsFromForm() {
+            let cfg = SERIES_CONFIG[currentSeries];
+            let rows = document.querySelectorAll('#itemsTableBody tr');
+            let items = [];
+            rows.forEach(r => {
+                let item = {};
+                let hasContent = false;
+                cfg.columns.forEach(c => {
+                    let el = r.querySelector('.item-' + c.key);
+                    let val = el ? el.value.trim() : '';
+                    item[c.key] = val;
+                    if (val) hasContent = true;
+                    if (c.subFields) {
+                        let subEl = r.querySelector('.item-' + c.key + '-sub');
+                        if (subEl && subEl.value) {
+                            try { item[c.key + 'Sub'] = JSON.parse(subEl.value); } catch(e) { item[c.key + 'Sub'] = {}; }
+                        }
+                    }
+                });
+                if (hasContent) items.push(item);
+            });
+            return items;
+        }
+
+        // ====== 报价单号生成：SL + 8位日期 + Q + 序号（不补零）======
+        // ====== 币种 ======
+        function toggleCurrencyCustom() {
+            let isCustom = document.getElementById('fCurrencySelect').value === 'custom';
+            document.getElementById('fCurrencyCustom').style.display = isCustom ? 'block' : 'none';
+            if (currentSeries) renderItemsTableHead();
+        }
+        function getCurrencyValue() {
+            let sel = document.getElementById('fCurrencySelect');
+            return sel.value === 'custom' ? (document.getElementById('fCurrencyCustom').value.trim() || 'USD') : sel.value;
+        }
+        function setCurrencySelect(value) {
+            let sel = document.getElementById('fCurrencySelect');
+            let options = Array.from(sel.options).map(o => o.value);
+            if (options.includes(value)) {
+                sel.value = value;
+                document.getElementById('fCurrencyCustom').style.display = 'none';
+            } else if (value) {
+                sel.value = 'custom';
+                document.getElementById('fCurrencyCustom').value = value;
+                document.getElementById('fCurrencyCustom').style.display = 'block';
+            } else {
+                sel.value = 'USD';
+                document.getElementById('fCurrencyCustom').style.display = 'none';
+            }
+        }
+
+        function genQuoteNo() {
+            let today = getToday().replace(/-/g, ''); // YYYYMMDD
+            let prefix = `SL${today}Q`;
+            let sameDay = quotes.filter(q => q.quoteNo && q.quoteNo.startsWith(prefix));
+            let seq = sameDay.length + 1;
+            return `${prefix}${seq}`;
+        }
+
+        // ====== 视图切换 ======
+        function backToList() { document.getElementById('detailView').classList.add('hidden'); document.getElementById('listView').classList.remove('hidden'); renderList(); }
+
+        async function openQuoteDetail(quoteNo) {
+            await populateCustomerSelect();
+            document.getElementById('listView').classList.add('hidden');
+            document.getElementById('detailView').classList.remove('hidden');
+            document.getElementById('fRemark').removeAttribute('data-user-edited');
+            delete document.getElementById('fRemark').dataset.userEdited;
+
+            if (quoteNo) {
+                let q = quotes.find(x => x.quoteNo === quoteNo);
+                if (!q) return;
+                currentQuoteNo = quoteNo;
+                currentSeries = null; // 强制selectSeries重新渲染表头
+                document.getElementById('detailTitle').innerText = `✏️ 编辑报价单 ${quoteNo}`;
+                document.getElementById('fQuoteNo').value = q.quoteNo;
+                document.getElementById('fQuoteDate').value = q.quoteDate || getToday();
+                document.getElementById('fCustomerSelect').value = '';
+                document.getElementById('fCustomerCompany').value = q.customerCompany || '';
+                document.getElementById('fCustomerCountry').value = q.customerCountry || '';
+                setCurrencySelect(q.currency || 'USD');
+                document.getElementById('fInternalNote').value = q.internalNote || '';
+                selectSeries(q.series, true);
+                document.getElementById('itemsTableBody').innerHTML = '';
+                (q.items || []).forEach(it => addItemRow(it));
+                document.getElementById('fRemark').value = q.remark || SERIES_CONFIG[q.series].defaultRemark;
+                document.getElementById('fRemark').dataset.userEdited = '1';
+                document.getElementById('deleteQuoteBtn').style.display = 'inline-flex';
+                document.getElementById('copyQuoteBtn').style.display = 'inline-flex';
+            } else {
+                currentQuoteNo = null;
+                currentSeries = null;
+                document.getElementById('detailTitle').innerText = '📝 新建报价单';
+                document.getElementById('fQuoteNo').value = '（保存时自动生成）';
+                document.getElementById('fQuoteDate').value = getToday();
+                document.getElementById('fCustomerSelect').value = '';
+                document.getElementById('fCustomerCompany').value = '';
+                document.getElementById('fCustomerCountry').value = '';
+                setCurrencySelect('USD');
+                document.getElementById('fInternalNote').value = '';
+                document.getElementById('itemsTableBody').innerHTML = '';
+                document.getElementById('itemsTableHead').innerHTML = '';
+                document.getElementById('fRemark').value = '';
+                document.querySelectorAll('.series-tab').forEach(t => t.classList.remove('active'));
+                document.getElementById('deleteQuoteBtn').style.display = 'none';
+                document.getElementById('copyQuoteBtn').style.display = 'none';
+                selectSeries('数控刀具', true); // 默认选中第一个系列
+            }
+            document.getElementById('fRemark').addEventListener('input', function() { this.dataset.userEdited = '1'; }, { once: false });
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // ====== 保存/复制/删除 ======
+        function saveQuote() {
+            let customerCompany = document.getElementById('fCustomerCompany').value.trim();
+            if (!customerCompany) { showToast('请填写客户名称', 'error'); return; }
+            if (!currentSeries) { showToast('请选择产品系列', 'error'); return; }
+            let items = getItemsFromForm();
+            if (items.length === 0) { showToast('请至少填写一条货品明细', 'error'); return; }
+
+            let quoteNo = currentQuoteNo || genQuoteNo();
+            let data = {
+                quoteNo,
+                quoteDate: document.getElementById('fQuoteDate').value || getToday(),
+                series: currentSeries,
+                customerCompany,
+                customerCountry: document.getElementById('fCustomerCountry').value.trim(),
+                currency: getCurrencyValue(),
+                items,
+                remark: document.getElementById('fRemark').value,
+                internalNote: document.getElementById('fInternalNote').value.trim()
+            };
+
+            if (currentQuoteNo) {
+                let idx = quotes.findIndex(q => q.quoteNo === currentQuoteNo);
+                if (idx !== -1) quotes[idx] = data;
+            } else {
+                quotes.push(data);
+            }
+
+            saveAll();
+            showToast(currentQuoteNo ? '报价单已更新' : `报价单已生成：${quoteNo}`);
+            currentQuoteNo = quoteNo;
+            document.getElementById('fQuoteNo').value = quoteNo;
+            document.getElementById('detailTitle').innerText = `✏️ 编辑报价单 ${quoteNo}`;
+            document.getElementById('deleteQuoteBtn').style.display = 'inline-flex';
+            document.getElementById('copyQuoteBtn').style.display = 'inline-flex';
+        }
+
+        function copyCurrentQuote() {
+            if (!currentQuoteNo) return;
+            currentQuoteNo = null;
+            document.getElementById('detailTitle').innerText = '📋 复制报价单（尚未保存，请核对后点保存）';
+            document.getElementById('fQuoteNo').value = '（保存时自动生成）';
+            document.getElementById('fQuoteDate').value = getToday();
+            document.getElementById('deleteQuoteBtn').style.display = 'none';
+            document.getElementById('copyQuoteBtn').style.display = 'none';
+            showToast('已复制，客户/货品信息已带入，请核对后保存');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        async function duplicateQuoteFromList(quoteNo) {
+            await openQuoteDetail(quoteNo);
+            copyCurrentQuote();
+        }
+
+        function deleteCurrentQuote() {
+            if (!currentQuoteNo) return;
+            if (!confirm(`删除报价单 ${currentQuoteNo}？`)) return;
+            let idx = quotes.findIndex(q => q.quoteNo === currentQuoteNo);
+            if (idx !== -1) { quotes[idx].deleted = true; quotes[idx].deletedAt = getToday(); }
+            saveAll();
+            showToast('已删除');
+            backToList();
+        }
+
+        // ====== 列表渲染 ======
+        function renderList() {
+            let kw = (document.getElementById('searchInput')?.value || '').trim().toLowerCase();
+            let seriesFilter = document.getElementById('filterSeries').value;
+            let showDeleted = document.getElementById('showDeletedCheckbox').checked;
+            let filtered = quotes.filter(q => {
+                if (q.deleted && !showDeleted) return false;
+                if (kw) {
+                    let hay = `${q.quoteNo} ${q.customerCompany}`.toLowerCase();
+                    if (!hay.includes(kw)) return false;
+                }
+                if (seriesFilter && q.series !== seriesFilter) return false;
+                return true;
+            });
+            filtered.sort((a, b) => (b.quoteNo || '').localeCompare(a.quoteNo || ''));
+
+            let html = filtered.map(q => {
+                if (q.deleted) {
+                    return `<tr style="opacity:0.5;">
+                        <td>${q.quoteNo} <span class="badge badge-overdue">已删除</span></td>
+                        <td colspan="6" style="color:#94a3b8;">删除时间：${formatDate(q.deletedAt)}</td>
+                        <td>—</td>
+                    </tr>`;
+                }
+                let itemCount = (q.items || []).length;
+                return `<tr>
+                    <td><span class="order-link" onclick="openQuoteDetail('${q.quoteNo}')">${q.quoteNo}</span></td>
+                    <td><span class="badge badge-series">${escapeHtml(q.series)}</span></td>
+                    <td>${escapeHtml(q.customerCompany)}</td>
+                    <td>${escapeHtml(q.customerCountry) || '—'}</td>
+                    <td>${escapeHtml(q.currency) || 'USD'}</td>
+                    <td>${formatDate(q.quoteDate)}</td>
+                    <td>${itemCount}</td>
+                    <td style="max-width:150px;">${escapeHtml(q.internalNote) || '—'}</td>
+                    <td><button class="btn btn-outline btn-sm" onclick="duplicateQuoteFromList('${q.quoteNo}')">📋 复制</button></td>
+                </tr>`;
+            }).join('');
+            document.getElementById('quoteTableBody').innerHTML = html || '<tr><td colspan="7" style="padding:30px;text-align:center;">暂无报价单</td></tr>';
+        }
+
+        // ====== 历史报价查询 ======
+        function openPriceHistoryModal() {
+            let sel = document.getElementById('phCustomerSelect');
+            let names = [...new Set(quotes.filter(q => !q.deleted).map(q => q.customerCompany).filter(Boolean))].sort();
+            sel.innerHTML = '<option value="">-- 请选择客户 --</option>' + names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+            document.getElementById('phProductKeyword').value = '';
+            document.getElementById('priceHistoryBody').innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;">请选择客户后点查询</td></tr>';
+            document.getElementById('priceHistoryModal').classList.add('active');
+        }
+
+        function runPriceHistoryQuery() {
+            let customer = document.getElementById('phCustomerSelect').value;
+            if (!customer) { showToast('请先选择客户', 'error'); return; }
+            let kw = document.getElementById('phProductKeyword').value.trim().toLowerCase();
+
+            let rows = [];
+            quotes.filter(q => !q.deleted && q.customerCompany === customer).forEach(q => {
+                (q.items || []).forEach(it => {
+                    let name = it.name || '';
+                    if (kw && !name.toLowerCase().includes(kw)) return;
+                    rows.push({ date: q.quoteDate, quoteNo: q.quoteNo, series: q.series, name, spec: it.spec || it.keySpec || '', price: it.price });
+                });
+            });
+            rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+            let html = rows.map(r => `
+                <tr>
+                    <td>${formatDate(r.date)}</td>
+                    <td>${escapeHtml(r.quoteNo)}</td>
+                    <td><span class="badge badge-series">${escapeHtml(r.series)}</span></td>
+                    <td>${escapeHtml(r.name)}</td>
+                    <td>${escapeHtml(r.spec)}</td>
+                    <td>${escapeHtml(r.price)}</td>
+                </tr>
+            `).join('');
+            document.getElementById('priceHistoryBody').innerHTML = html || '<tr><td colspan="6" style="padding:20px;text-align:center;">没有找到匹配的历史记录</td></tr>';
+        }
+
+        // ====== 导出报价单（Excel固定排版，照参考模板样式，方便另存为PDF）======
+        function exportQuote() {
+            if (!currentQuoteNo) { showToast('请先保存报价单再导出', 'error'); return; }
+            let q = quotes.find(x => x.quoteNo === currentQuoteNo);
+            if (!q) { showToast('未找到报价单数据', 'error'); return; }
+            let cfg = SERIES_CONFIG[q.series];
+            let items = q.items || [];
+            let colCount = cfg.columns.length + 1; // +1 是序号列（目前三个系列固定都是7列）
+
+            const thin = { style: 'thin', color: { rgb: '000000' } };
+            const border = { top: thin, bottom: thin, left: thin, right: thin };
+            const titleFont = { name: 'Arial', sz: 16, bold: true };
+            const headFont = { name: 'Arial', sz: 10, bold: true, color: { rgb: 'FFFFFF' } };
+            const normalFont = { name: 'Arial', sz: 10 };
+            const boldFont = { name: 'Arial', sz: 10, bold: true };
+            const centerAlign = { horizontal: 'center', vertical: 'center', wrapText: true };
+            const leftAlign = { horizontal: 'left', vertical: 'center', wrapText: true };
+            const rightAlign = { horizontal: 'right', vertical: 'center', wrapText: true };
+            const orangeFill = { fill: { patternType: 'solid', fgColor: { rgb: 'ED7D31' } } };
+            const grayFill = { fill: { patternType: 'solid', fgColor: { rgb: 'D9D9D9' } } };
+
+            let aoa = [];
+            let merges = [];
+            let rowHeights = {}; // 记录每一行需要的高度（像素），最后统一写入 !rows
+            function addRow(cells, heightPx) {
+                aoa.push(cells);
+                let idx = aoa.length - 1;
+                if (heightPx) rowHeights[idx] = heightPx;
+                return idx;
+            }
+            function cell(v, font, align, brd, extra) {
+                let s = { font: font || normalFont, alignment: align || leftAlign };
+                if (brd) s.border = brd;
+                if (extra) Object.assign(s, extra);
+                return { v: v == null ? '' : v, t: 's', s };
+            }
+            function fillRow(n) { return new Array(n).fill(''); }
+            // 估算多行文字大概需要几行高度（按字符数粗略换算，避免文字被压扁看不全）
+            function estimateLines(text, charsPerLine) {
+                if (!text) return 1;
+                let manualLines = String(text).split('\n');
+                let total = 0;
+                manualLines.forEach(l => { total += Math.max(1, Math.ceil(l.length / charsPerLine)); });
+                return Math.max(1, total);
+            }
+
+            // 标题
+            let rTitle = addRow([cell('QUOTATION', titleFont, centerAlign), ...fillRow(colCount - 1)], 28);
+            merges.push({ s: { r: rTitle, c: 0 }, e: { r: rTitle, c: colCount - 1 } });
+
+            // 表头信息：每一行都合并成"左边一大块 + 右边一大块"两块，中间不留任何未合并的散格，
+            // 避免散格夹在货品表格的窄列里显得很挤/被切字
+            const leftEnd = 3;   // 左块：列0-3
+            const rightStart = 4; // 右块：列4到最后
+            let rH1 = addRow([
+                cell(`Supplier: ${SUPPLIER.name}`, boldFont, leftAlign), ...fillRow(leftEnd),
+                cell(`Date: ${q.quoteDate}`, boldFont, leftAlign), ...fillRow(colCount - rightStart - 1)
+            ], 20);
+            merges.push({ s: { r: rH1, c: 0 }, e: { r: rH1, c: leftEnd } });
+            merges.push({ s: { r: rH1, c: rightStart }, e: { r: rH1, c: colCount - 1 } });
+
+            let rH2 = addRow([
+                cell(`Contact: ${SUPPLIER.contact}`, boldFont, leftAlign), ...fillRow(leftEnd),
+                cell(`Quotation No.: ${q.quoteNo}`, boldFont, leftAlign), ...fillRow(colCount - rightStart - 1)
+            ], 20);
+            merges.push({ s: { r: rH2, c: 0 }, e: { r: rH2, c: leftEnd } });
+            merges.push({ s: { r: rH2, c: rightStart }, e: { r: rH2, c: colCount - 1 } });
+
+            let rH3 = addRow([
+                cell(`Email: ${SUPPLIER.email}`, boldFont, leftAlign), ...fillRow(leftEnd),
+                cell(`Customer: ${q.customerCompany}`, boldFont, leftAlign), ...fillRow(colCount - rightStart - 1)
+            ], 20);
+            merges.push({ s: { r: rH3, c: 0 }, e: { r: rH3, c: leftEnd } });
+            merges.push({ s: { r: rH3, c: rightStart }, e: { r: rH3, c: colCount - 1 } });
+
+            let rH4 = addRow([
+                ...fillRow(leftEnd + 1),
+                cell(`Country: ${q.customerCountry || ''}`, boldFont, leftAlign), ...fillRow(colCount - rightStart - 1)
+            ], 20);
+            merges.push({ s: { r: rH4, c: 0 }, e: { r: rH4, c: leftEnd } });
+            merges.push({ s: { r: rH4, c: rightStart }, e: { r: rH4, c: colCount - 1 } });
+
+            // 货品表头（橙底白字，跟参考图一致），单价/金额列带上这份报价单的真实币种
+            let currency = q.currency || 'USD';
+            let headerCells = [cell('Item No.', headFont, centerAlign, border, orangeFill)];
+            cfg.columns.forEach(c => {
+                let label = (c.key === 'price' || c.key === 'amount') ? `${c.label} (${currency})` : c.label;
+                headerCells.push(cell(label, headFont, centerAlign, border, orangeFill));
+            });
+            addRow(headerCells, 28);
+
+            items.forEach((it, i) => {
+                let rowCells = [cell(i + 1, normalFont, centerAlign, border)];
+                let maxLines = 1;
+                cfg.columns.forEach(c => {
+                    let align = (c.key === 'price' || c.key === 'amount') ? rightAlign : (c.multiline ? leftAlign : centerAlign);
+                    rowCells.push(cell(it[c.key], normalFont, align, border));
+                    if (c.multiline) {
+                        let charsPerLine = Math.max(10, (c.excelWidth || 20) * 1.6);
+                        maxLines = Math.max(maxLines, estimateLines(it[c.key], charsPerLine));
+                    }
+                });
+                addRow(rowCells, Math.max(20, maxLines * 15 + 6));
+            });
+
+            addRow(fillRow(colCount), 8);
+
+            // Remark
+            let rRemark = addRow([cell('Remark:', boldFont, leftAlign), ...fillRow(colCount - 1)], 18);
+            merges.push({ s: { r: rRemark, c: 0 }, e: { r: rRemark, c: colCount - 1 } });
+            let remarkText = q.remark || '';
+            let remarkLineCount = remarkText.split('\n').length;
+            let rRemarkBody = addRow([cell(remarkText, normalFont, leftAlign), ...fillRow(colCount - 1)], remarkLineCount * 15 + 10);
+            merges.push({ s: { r: rRemarkBody, c: 0 }, e: { r: rRemarkBody, c: colCount - 1 } });
+
+            addRow(fillRow(colCount), 8);
+            // 灰色Image占位条（对应参考模板里贴产品图片的地方，你导出后可以自己在Excel里贴图）
+            let rImg = addRow([cell('Image', boldFont, centerAlign, null, grayFill), ...fillRow(colCount - 1)], 18);
+            merges.push({ s: { r: rImg, c: 0 }, e: { r: rImg, c: colCount - 1 } });
+            for (let i = 0; i < 8; i++) addRow(fillRow(colCount), 20); // 空行留白给贴图用
+
+            // Why Choose Us
+            let rWhy = addRow([cell('Why Choose Us', boldFont, leftAlign), ...fillRow(colCount - 1)], 18);
+            merges.push({ s: { r: rWhy, c: 0 }, e: { r: rWhy, c: colCount - 1 } });
+            cfg.whyChooseUs.forEach((line, i) => {
+                let r = addRow([cell(`${i + 1}.${line}`, normalFont, leftAlign), ...fillRow(colCount - 1)], 16);
+                merges.push({ s: { r: r, c: 0 }, e: { r: r, c: colCount - 1 } });
+            });
+
+            let ws = XLSX.utils.aoa_to_sheet(aoa);
+            ws['!merges'] = merges;
+            ws['!cols'] = [{ wch: 6 }].concat(cfg.columns.map(c => ({ wch: c.excelWidth || 16 })));
+            ws['!rows'] = aoa.map((row, i) => ({ hpx: rowHeights[i] || 18 }));
+
+            let wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '报价单');
+            XLSX.writeFile(wb, `报价单_${q.quoteNo}.xlsx`);
+            showToast('报价单已导出，用Excel打开后可直接"文件→导出→创建PDF"另存为PDF');
+        }
+    </script>
+</body>
+</html>
