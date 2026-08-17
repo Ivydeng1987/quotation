@@ -102,6 +102,7 @@
             <h1>💰 报价系统 <span>v1.0</span></h1>
             <div class="header-right">
                 <span class="sync-status success" id="syncStatus">⏳ 载入中...</span>
+                <button class="btn btn-primary" id="retrySyncBtn" onclick="retrySync()" style="display:none;">🔄 重试同步</button>
                 <button class="btn btn-outline" onclick="openCustomerModal()">👤 客户资料库</button>
                 <button class="btn btn-outline" onclick="backupAllData()">💾 备份全部数据</button>
                 <button class="btn btn-outline" onclick="changePassword()">🔑 改密</button>
@@ -162,14 +163,12 @@
                     <div class="form-group"></div>
                 </div>
 
-                <div class="form-group">
-                    <label>选择客户（从客户资料库自动填充，也可手动填写）</label>
-                    <select id="fCustomerSelect" onchange="fillCustomerFromSelect()">
-                        <option value="">-- 手动填写 / 选择已有客户 --</option>
-                    </select>
-                </div>
                 <div class="form-row-3">
-                    <div class="form-group"><label>客户 *</label><input type="text" id="fCustomerCompany"></div>
+                    <div class="form-group">
+                        <label>客户 *（输入关键词可从CRM/本地客户库联想筛选）</label>
+                        <input type="text" id="fCustomerCompany" list="customerDatalist" oninput="fillCustomerFromSelect()" placeholder="输入客户名关键词...">
+                        <datalist id="customerDatalist"></datalist>
+                    </div>
                     <div class="form-group"><label>国家</label><input type="text" id="fCustomerCountry"></div>
                     <div class="form-group">
                         <label>币种</label>
@@ -421,6 +420,9 @@ OEM/ODM: Available`,
             return null;
         }
 
+        let hasPendingSync = false; // 是否有还没成功推送到云端的本地改动
+        let cloudEverLoaded = false; // 本次打开页面后，是否成功从云端读取过数据（决定"重试"时应该是重新读还是重新写）
+
         async function pushCloudData() {
             try {
                 let payload = { password: APP_PASSWORD, quotes, customers };
@@ -429,10 +431,59 @@ OEM/ODM: Available`,
                     headers: { 'Content-Type': 'application/json', 'X-Access-Token': ACCESS_TOKEN },
                     body: JSON.stringify(payload)
                 });
-                if (res.ok) return true;
+                if (res.ok) {
+                    hasPendingSync = false;
+                    document.getElementById('syncStatus').innerText = "✅ 已同步云端";
+                    document.getElementById('syncStatus').className = "sync-status success";
+                    document.getElementById('retrySyncBtn').style.display = 'none';
+                    return true;
+                }
                 console.error("上传失败:", res.status);
+                markSyncFailed();
                 return false;
-            } catch(e) { console.error("上传错误:", e); return false; }
+            } catch(e) {
+                console.error("上传错误:", e);
+                markSyncFailed();
+                return false;
+            }
+        }
+
+        function markSyncFailed() {
+            hasPendingSync = true;
+            document.getElementById('syncStatus').innerText = "⚠️ 云端连接失败(数据已存本地)";
+            document.getElementById('syncStatus').className = "sync-status error";
+            document.getElementById('retrySyncBtn').style.display = 'inline-flex';
+        }
+
+        // 手动重试：如果这次打开页面还没成功连过云端，重试=重新去读（避免拿本地空/旧数据覆盖云端）；
+        // 如果已经成功读过云端、是后续保存推送失败，重试=重新推送当前数据
+        async function retrySync() {
+            let btn = document.getElementById('retrySyncBtn');
+            btn.disabled = true;
+            btn.innerText = '🔄 正在重试...';
+            let success;
+            if (!cloudEverLoaded) {
+                let cloud = await getCloudData();
+                if (cloud) {
+                    cloudEverLoaded = true;
+                    quotes = cloud.quotes;
+                    customers = cloud.customers;
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify({ quotes, customers }));
+                    if (cloud.password) { APP_PASSWORD = cloud.password; localStorage.setItem('my_app_pwd', APP_PASSWORD); }
+                    document.getElementById('syncStatus').innerText = "✅ 已同步云端";
+                    document.getElementById('syncStatus').className = "sync-status success";
+                    document.getElementById('retrySyncBtn').style.display = 'none';
+                    renderList();
+                    success = true;
+                } else {
+                    success = false;
+                }
+            } else {
+                success = await pushCloudData();
+            }
+            btn.disabled = false;
+            btn.innerText = '🔄 重试同步';
+            showToast(success ? '同步成功！' : '还是没连上，请稍后再试', success ? 'success' : 'error');
         }
 
         // ====== 只读拉取CRM客户资料（用于客户下拉选择）======
@@ -457,6 +508,7 @@ OEM/ODM: Available`,
         async function preloadCloud() {
             let cloud = await getCloudData();
             if (cloud) {
+                cloudEverLoaded = true;
                 quotes = cloud.quotes;
                 customers = cloud.customers;
                 localStorage.setItem(STORAGE_KEY, JSON.stringify({ quotes, customers }));
@@ -476,6 +528,7 @@ OEM/ODM: Available`,
                     document.getElementById('syncStatus').innerText = "📂 空系统";
                 }
                 document.getElementById('syncStatus').className = "sync-status error";
+                document.getElementById('retrySyncBtn').style.display = 'inline-flex';
             }
             let btn = document.getElementById('unlockBtn');
             btn.disabled = false;
@@ -555,29 +608,29 @@ OEM/ODM: Available`,
             await populateCustomerSelect();
         }
         // 下拉框合并两个来源：CRM系统的客户（主要来源）+ 本系统手动补充的客户（CRM里还没有的）
+        // 把CRM客户+本地手动补充的客户，合并存一份到内存里，供输入联想时按名字查找
+        let allQuoteCustomersMerged = [];
         async function populateCustomerSelect() {
-            let sel = document.getElementById('fCustomerSelect');
-            let current = sel.value;
             let crmClients = await fetchCrmCustomers();
-            let crmOptions = crmClients.map(c => `<option value="crm:${c.id}">${escapeHtml(c.company)}（CRM）</option>`).join('');
-            let localOptions = customers.map(c => `<option value="local:${c.id}">${escapeHtml(c.company)}（手动补充）</option>`).join('');
-            sel.innerHTML = '<option value="">-- 手动填写 / 选择已有客户 --</option>' + crmOptions + localOptions;
-            sel.value = current;
+            allQuoteCustomersMerged = [...crmClients, ...customers];
+            let datalist = document.getElementById('customerDatalist');
+            // 去重（万一CRM和本地手动补充里恰好有同名客户，只保留一个选项，避免联想列表里出现两条一样的）
+            let seen = new Set();
+            let options = [];
+            allQuoteCustomersMerged.forEach(c => {
+                if (!c.company || seen.has(c.company)) return;
+                seen.add(c.company);
+                options.push(`<option value="${escapeHtml(c.company)}">`);
+            });
+            datalist.innerHTML = options.join('');
         }
-        async function fillCustomerFromSelect() {
-            let val = document.getElementById('fCustomerSelect').value;
+        // 客户名输入框内容变化时（打字联想选中，或者正好打出跟已有客户完全一样的名字），自动带出国家
+        function fillCustomerFromSelect() {
+            let val = document.getElementById('fCustomerCompany').value.trim();
             if (!val) return;
-            let [source, id] = val.split(':');
-            let c;
-            if (source === 'crm') {
-                let crmClients = await fetchCrmCustomers();
-                c = crmClients.find(x => x.id === id);
-            } else {
-                c = customers.find(x => x.id === id);
-            }
-            if (c) {
-                document.getElementById('fCustomerCompany').value = c.company || '';
-                document.getElementById('fCustomerCountry').value = c.country || '';
+            let c = allQuoteCustomersMerged.find(x => x.company === val);
+            if (c && c.country) {
+                document.getElementById('fCustomerCountry').value = c.country;
             }
         }
 
@@ -767,7 +820,6 @@ OEM/ODM: Available`,
                 document.getElementById('detailTitle').innerText = `✏️ 编辑报价单 ${quoteNo}`;
                 document.getElementById('fQuoteNo').value = q.quoteNo;
                 document.getElementById('fQuoteDate').value = q.quoteDate || getToday();
-                document.getElementById('fCustomerSelect').value = '';
                 document.getElementById('fCustomerCompany').value = q.customerCompany || '';
                 document.getElementById('fCustomerCountry').value = q.customerCountry || '';
                 setCurrencySelect(q.currency || 'USD');
@@ -785,7 +837,6 @@ OEM/ODM: Available`,
                 document.getElementById('detailTitle').innerText = '📝 新建报价单';
                 document.getElementById('fQuoteNo').value = '（保存时自动生成）';
                 document.getElementById('fQuoteDate').value = getToday();
-                document.getElementById('fCustomerSelect').value = '';
                 document.getElementById('fCustomerCompany').value = '';
                 document.getElementById('fCustomerCountry').value = '';
                 setCurrencySelect('USD');
