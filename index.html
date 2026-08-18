@@ -183,6 +183,14 @@
                         <input type="text" id="fCurrencyCustom" placeholder="请输入币种代码" style="margin-top:6px;display:none;" oninput="if(currentSeries) renderItemsTableHead();">
                     </div>
                 </div>
+                <div class="form-row-3">
+                    <div class="form-group"></div>
+                    <div class="form-group"></div>
+                    <div class="form-group">
+                        <label>成本换算汇率（成本价是人民币，币种选CNY时不换算，选其他币种时按这个汇率换算）</label>
+                        <input type="text" id="fExchangeRate" value="6" placeholder="如：6">
+                    </div>
+                </div>
 
                 <div class="form-group">
                     <label>货品明细</label>
@@ -291,6 +299,7 @@
                     { key: 'spec', label: 'Specification', width: '14%', excelWidth: 16 },
                     { key: 'code', label: 'SZSUNLIT Code', width: '12%', excelWidth: 14 },
                     { key: 'material', label: 'Material/Coating', width: '12%', excelWidth: 14 },
+                    { key: 'cost', label: '成本价', width: '10%', internalOnly: true },
                     { key: 'price', label: 'Unit Price', width: '12%', excelWidth: 12 },
                     { key: 'moq', label: 'MOQ', width: '8%', excelWidth: 7 },
                     { key: 'qty', label: 'QTY', width: '12%', excelWidth: 7 },
@@ -315,6 +324,7 @@ OEM/ODM: Available`,
                     { key: 'spec', label: 'Specification/Drawing NO.', width: '16%', excelWidth: 18 },
                     { key: 'material', label: 'Material', width: '11%', excelWidth: 12 },
                     { key: 'compatibleSystem', label: 'Compatible System', width: '11%', excelWidth: 12 },
+                    { key: 'cost', label: '成本价', width: '9%', internalOnly: true },
                     { key: 'price', label: 'Unit Price', width: '12%', excelWidth: 12 },
                     { key: 'moq', label: 'MOQ', width: '8%', excelWidth: 7 },
                     { key: 'qty', label: 'QTY', width: '12%', excelWidth: 7 },
@@ -352,6 +362,7 @@ Final dimensions shall be subject to the approved drawing.`,
                         { key: 'temperature', label: 'Temperature' },
                         { key: 'additionalCondition', label: 'Additional Conditions' }
                     ] },
+                    { key: 'cost', label: '成本价', width: '9%', internalOnly: true },
                     { key: 'price', label: 'Unit Price', width: '12%', excelWidth: 12 },
                     { key: 'qty', label: 'Qty', width: '10%', excelWidth: 8 },
                     { key: 'amount', label: 'Amount', width: '12%', excelWidth: 12, readonly: true }
@@ -683,7 +694,9 @@ OEM/ODM: Available`,
                 }
                 if (c.readonly) return `<td><input type="text" class="item-${c.key}" value="${val}" readonly style="background:#f8fafc;"></td>`;
                 if (c.multiline) return `<td><textarea class="item-${c.key}" rows="3">${val}</textarea></td>`;
-                let oninput = (c.key === 'price' || c.key === 'qty') ? ' oninput="updateAmountIfNeeded(this)"' : '';
+                if (c.key === 'cost') return `<td><input type="text" class="item-${c.key}" value="${val}" oninput="updateCostBasedPrice(this)" onblur="evaluateFormulaIfNeeded(this); updateCostBasedPrice(this);" style="background:#fff8e6;" title="内部成本价（人民币），不会出现在导出的报价单里；也可以直接打算式，比如 100*1.05"></td>`;
+                if (c.key === 'price') return `<td><input type="text" class="item-${c.key}" value="${val}" oninput="updateAmountIfNeeded(this)" onblur="evaluateFormulaIfNeeded(this)" title="可以直接打算式，比如 100/0.8+5，切到别的格子会自动算出结果"></td>`;
+                let oninput = (c.key === 'qty') ? ' oninput="updateAmountIfNeeded(this)"' : '';
                 return `<td><input type="text" class="item-${c.key}" value="${val}"${oninput}></td>`;
             }).join('');
             tr.innerHTML = `<td class="seq-cell">${seq}</td>${cellsHtml}<td><button class="del-row" onclick="this.closest('tr').remove(); renumberRows();">🗑️</button></td>`;
@@ -747,6 +760,57 @@ OEM/ODM: Available`,
             let amount = price * qty;
             amountInput.value = amount ? amount.toFixed(2) : '';
         }
+
+        // 填了成本价（人民币）后，按毛利率20%+汇率自动算出建议售价：
+        // 币种选CNY时不用换汇率，售价 = 成本 ÷ 0.8；
+        // 币种选其他的，售价 = 成本 ÷ 0.8 ÷ 汇率
+        // 售价栏本身还是可以手动改的——如果某个型号不按20%走，改完成本后再手动把售价改成你要的数字就行，
+        // 只要不再动这一行的成本价，售价就会保持你手动改的那个值
+        function updateCostBasedPrice(inputEl) {
+            let row = inputEl.closest('tr');
+            let costInput = row.querySelector('.item-cost');
+            let priceInput = row.querySelector('.item-price');
+            if (!costInput || !priceInput) return;
+            let cost = parseFloat(costInput.value) || 0;
+            if (cost > 0) {
+                let currency = getCurrencyValue();
+                let suggestedPrice;
+                if (currency === 'CNY') {
+                    suggestedPrice = cost / 0.8;
+                } else {
+                    let rate = parseFloat(document.getElementById('fExchangeRate').value) || 6;
+                    suggestedPrice = cost / 0.8 / rate;
+                }
+                priceInput.value = suggestedPrice.toFixed(2);
+                updateAmountIfNeeded(priceInput); // 顺带把金额也重新算一下（有qty/amount的系列）
+            }
+        }
+
+        // 售价栏支持像Excel一样直接输入算式（比如 "100/0.8" 或 "=100/0.8+5"），
+        // 打完切换到别的输入框时（失焦）自动计算出结果替换成数字。
+        // 只允许数字/运算符/括号/小数点，不会执行任何其他代码，安全。
+        function evaluateFormulaIfNeeded(inputEl) {
+            let val = inputEl.value.trim();
+            if (!val) return;
+            let expr = val.startsWith('=') ? val.slice(1).trim() : val;
+            if (!/[+\-*/()]/.test(expr)) return; // 纯数字不用当公式处理，跳过
+            if (!/^[\d+\-*/(). ]+$/.test(expr)) {
+                showToast('公式里有不支持的字符，只能用数字和 + - * / ( )', 'error');
+                return;
+            }
+            try {
+                let result = Function('"use strict"; return (' + expr + ')')();
+                if (typeof result === 'number' && isFinite(result)) {
+                    inputEl.value = result.toFixed(2);
+                    updateAmountIfNeeded(inputEl); // 顺带把金额也重新算一下
+                } else {
+                    showToast('公式算不出有效数字', 'error');
+                }
+            } catch(e) {
+                showToast('公式格式不对，算不出来', 'error');
+            }
+        }
+
         function getItemsFromForm() {
             let cfg = SERIES_CONFIG[currentSeries];
             let rows = document.querySelectorAll('#itemsTableBody tr');
@@ -827,6 +891,7 @@ OEM/ODM: Available`,
                 document.getElementById('fCustomerCompany').value = q.customerCompany || '';
                 document.getElementById('fCustomerCountry').value = q.customerCountry || '';
                 setCurrencySelect(q.currency || 'USD');
+                document.getElementById('fExchangeRate').value = q.exchangeRate || '6';
                 document.getElementById('fInternalNote').value = q.internalNote || '';
                 selectSeries(q.series, true);
                 document.getElementById('itemsTableBody').innerHTML = '';
@@ -844,6 +909,7 @@ OEM/ODM: Available`,
                 document.getElementById('fCustomerCompany').value = '';
                 document.getElementById('fCustomerCountry').value = '';
                 setCurrencySelect('USD');
+                document.getElementById('fExchangeRate').value = '6';
                 document.getElementById('fInternalNote').value = '';
                 document.getElementById('itemsTableBody').innerHTML = '';
                 document.getElementById('itemsTableHead').innerHTML = '';
@@ -873,6 +939,7 @@ OEM/ODM: Available`,
                 customerCompany,
                 customerCountry: document.getElementById('fCustomerCountry').value.trim(),
                 currency: getCurrencyValue(),
+                exchangeRate: document.getElementById('fExchangeRate').value.trim() || '6',
                 items,
                 remark: document.getElementById('fRemark').value,
                 internalNote: document.getElementById('fInternalNote').value.trim()
@@ -1006,7 +1073,8 @@ OEM/ODM: Available`,
             if (!q) { showToast('未找到报价单数据', 'error'); return; }
             let cfg = SERIES_CONFIG[q.series];
             let items = q.items || [];
-            let colCount = cfg.columns.length + 1; // +1 是序号列（目前三个系列固定都是7列）
+            let exportColumns = cfg.columns.filter(c => !c.internalOnly); // 成本价这类内部字段不出现在导出的报价单里
+            let colCount = exportColumns.length + 1; // +1 是序号列
 
             const thin = { style: 'thin', color: { rgb: '000000' } };
             const border = { top: thin, bottom: thin, left: thin, right: thin };
@@ -1084,7 +1152,7 @@ OEM/ODM: Available`,
             // 货品表头（橙底白字，跟参考图一致），单价/金额列带上这份报价单的真实币种
             let currency = q.currency || 'USD';
             let headerCells = [cell('Item No.', headFont, centerAlign, border, orangeFill)];
-            cfg.columns.forEach(c => {
+            exportColumns.forEach(c => {
                 let label = (c.key === 'price' || c.key === 'amount') ? `${c.label} (${currency})` : c.label;
                 headerCells.push(cell(label, headFont, centerAlign, border, orangeFill));
             });
@@ -1093,7 +1161,7 @@ OEM/ODM: Available`,
             items.forEach((it, i) => {
                 let rowCells = [cell(i + 1, normalFont, centerAlign, border)];
                 let maxLines = 1;
-                cfg.columns.forEach(c => {
+                exportColumns.forEach(c => {
                     let align = (c.key === 'price' || c.key === 'amount') ? rightAlign : (c.multiline ? leftAlign : centerAlign);
                     rowCells.push(cell(it[c.key], normalFont, align, border));
                     if (c.multiline) {
@@ -1130,7 +1198,7 @@ OEM/ODM: Available`,
 
             let ws = XLSX.utils.aoa_to_sheet(aoa);
             ws['!merges'] = merges;
-            ws['!cols'] = [{ wch: 6 }].concat(cfg.columns.map(c => ({ wch: c.excelWidth || 16 })));
+            ws['!cols'] = [{ wch: 6 }].concat(exportColumns.map(c => ({ wch: c.excelWidth || 16 })));
             ws['!rows'] = aoa.map((row, i) => ({ hpx: rowHeights[i] || 18 }));
 
             let wb = XLSX.utils.book_new();
