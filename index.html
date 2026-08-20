@@ -122,6 +122,7 @@
                 <label style="display:flex;align-items:center;gap:6px;font-size:12px;"><input type="checkbox" id="showDeletedCheckbox" onchange="renderList()" style="width:auto;"> 显示已删除</label>
                 <div style="flex:1;"></div>
                 <button class="btn btn-outline" onclick="openPriceHistoryModal()">📊 历史报价查询</button>
+                <button class="btn btn-primary" onclick="openAiRfqModal()">🤖 AI询价助手</button>
                 <button class="btn btn-primary" onclick="openQuoteDetail(null)">➕ 新建报价单</button>
             </div>
             <div class="table-wrapper">
@@ -259,6 +260,49 @@
                     </thead>
                     <tbody id="priceHistoryBody"><tr><td colspan="6" style="padding:20px;text-align:center;">请选择客户后点查询</td></tr></tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== AI询价助手弹窗 ========== -->
+    <div class="modal-overlay" id="aiRfqModal">
+        <div class="modal" style="max-width:900px;">
+            <h2>🤖 AI询价助手</h2>
+            <div style="background:#fff8e6; border:1px solid #f0d999; border-radius:12px; padding:10px 14px; font-size:12px; color:#7a5c14; margin-bottom:14px;">
+                把客户发来的询价邮件/消息原文粘贴进去，AI帮你拆解出型号规格，并自动查一遍这个客户、以及其他客户，过去这个型号报过多少钱——<b>价格最终由你自己填，AI不会替你定价</b>。
+            </div>
+
+            <div id="aiRfqStep1">
+                <div class="form-group">
+                    <label>粘贴RFQ询价内容</label>
+                    <textarea id="aiRfqInput" rows="8" placeholder="把客户邮件/消息原文粘贴到这里..."></textarea>
+                </div>
+                <button class="btn btn-primary" id="aiRfqParseBtn" onclick="runAiRfqParse()">🔍 AI解析</button>
+                <div id="aiRfqStatus" style="margin-top:10px; font-size:12px; color:#94a3b8;"></div>
+            </div>
+
+            <div id="aiRfqStep2" class="hidden">
+                <div class="form-row-3">
+                    <div class="form-group"><label>客户（AI提取，可修改）</label><input type="text" id="aiExtractedCustomer"></div>
+                    <div class="form-group"><label>国家</label><input type="text" id="aiExtractedCountry"></div>
+                    <div class="form-group">
+                        <label>产品系列（AI判断，可修改）</label>
+                        <select id="aiExtractedSeries">
+                            <option value="数控刀具">数控刀具</option>
+                            <option value="塑料切粒刀">塑料切粒刀</option>
+                            <option value="微型磁力泵">微型磁力泵</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="aiExtractedItemsList"></div>
+                <div style="display:flex; gap:10px; margin-top:14px;">
+                    <button class="btn btn-outline" onclick="backToAiRfqStep1()">← 重新解析</button>
+                    <button class="btn btn-primary" onclick="generateDraftFromAi()">📝 生成报价草稿（进入报价单详情页，价格自己填）</button>
+                </div>
+            </div>
+
+            <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px;">
+                <button class="btn btn-outline" onclick="closeModal('aiRfqModal')">关闭</button>
             </div>
         </div>
     </div>
@@ -1064,6 +1108,287 @@ OEM/ODM: Available`,
                 </tr>
             `).join('');
             document.getElementById('priceHistoryBody').innerHTML = html || '<tr><td colspan="6" style="padding:20px;text-align:center;">没有找到匹配的历史记录</td></tr>';
+        }
+
+        // ====== 可复用的历史价格查询：给品名关键词，返回匹配的历史报价记录（customer留空=不限客户，查全部）======
+        function queryPriceHistory(keyword, customerCompany) {
+            let kw = (keyword || '').trim().toLowerCase();
+            if (!kw) return [];
+            let rows = [];
+            quotes.filter(q => !q.deleted && (!customerCompany || q.customerCompany === customerCompany)).forEach(q => {
+                (q.items || []).forEach(it => {
+                    let name = (it.name || '').toLowerCase();
+                    if (!name.includes(kw)) return;
+                    rows.push({ date: q.quoteDate, quoteNo: q.quoteNo, customerCompany: q.customerCompany, series: q.series, name: it.name, spec: it.spec || it.keySpec || '', price: it.price, currency: q.currency || 'USD' });
+                });
+            });
+            rows.sort((a, b) => (b.date || '').localeCompare(a.date || '')); // 最新的排前面
+            return rows;
+        }
+
+        // ====== AI询价助手 ======
+        let aiExtractedData = null; // AI解析出来的原始数据，供生成草稿时使用
+        const AI_REQUEST_TIMEOUT_MS = 50000; // 前端超时设得比Worker的45秒略宽松，确保是Worker先判定超时，前端不会抢先掐断正常在处理中的大批量请求
+
+        function openAiRfqModal() {
+            document.getElementById('aiRfqInput').value = '';
+            document.getElementById('aiRfqStatus').innerText = '';
+            document.getElementById('aiRfqStep1').classList.remove('hidden');
+            document.getElementById('aiRfqStep2').classList.add('hidden');
+            document.getElementById('aiRfqModal').classList.add('active');
+        }
+        function backToAiRfqStep1() {
+            document.getElementById('aiRfqStep1').classList.remove('hidden');
+            document.getElementById('aiRfqStep2').classList.add('hidden');
+        }
+
+        // 带超时的fetch封装：超过AI_REQUEST_TIMEOUT_MS还没响应就主动中止，不会无限等下去
+        async function fetchWithTimeout(url, options, timeoutMs) {
+            let controller = new AbortController();
+            let timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                return await fetch(url, { ...options, signal: controller.signal });
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        }
+
+        // 校验AI返回的JSON是不是真的符合我们要的结构，不是"能JSON.parse就算过关"——
+        // 结构不对也绝对不能拿去污染表单，直接报错让用户知道，用原始文字兜底显示
+        function validateExtractedSchema(extracted) {
+            if (typeof extracted !== 'object' || extracted === null || Array.isArray(extracted)) {
+                return 'AI返回的不是一个有效的JSON对象';
+            }
+            if (typeof extracted.customerCompany !== 'string') return '返回结果里 customerCompany 字段缺失或类型不对';
+            if (!Array.isArray(extracted.items)) return '返回结果里 items 字段缺失，或者不是数组';
+            if (extracted.items.length === 0) return 'AI没有从内容里识别出任何货品信息，可能不是一封询价邮件，或者内容AI没看懂';
+            for (let i = 0; i < extracted.items.length; i++) {
+                let it = extracted.items[i];
+                if (typeof it !== 'object' || it === null) return `第${i + 1}条货品格式不对`;
+                if (typeof it.name !== 'string') return `第${i + 1}条货品缺少品名(name)字段`;
+            }
+            return null; // 通过校验，返回null表示没问题
+        }
+
+        async function runAiRfqParse() {
+            let rfqText = document.getElementById('aiRfqInput').value.trim();
+            if (!rfqText) { showToast('请先粘贴RFQ内容', 'error'); return; }
+
+            let btn = document.getElementById('aiRfqParseBtn');
+            let statusEl = document.getElementById('aiRfqStatus');
+            btn.disabled = true;
+            statusEl.style.color = '#94a3b8';
+            statusEl.innerText = '🤖 AI正在解析询价内容，型号越多耗时越长，请稍候（最多等50秒）...';
+
+            // 注意：这整个函数从头到尾都不会碰 quotes 这个数组、不会调用 saveAll()/pushCloudData()，
+            // 不管这里面出什么错，都不影响你正常新建/编辑/保存/导出报价单——那些是完全独立的流程。
+            try {
+                let systemPrompt = `你是外贸数控刀具/塑料切粒刀/微型磁力泵询价单（RFQ）信息提取助手。用户会给你一封客户发来的询价邮件/消息原文，请你提取关键信息，只返回JSON，不要有任何其他文字、不要markdown代码块包裹、不要解释。
+
+JSON格式：
+{
+  "customerCompany": "客户公司名（从签名/署名/邮箱域名等能看出来的话就填，看不出来就填空字符串，绝不editorializing、绝不编造）",
+  "customerCountry": "客户所在国家（能明确看出的话就填，看不出来就填空字符串）",
+  "suggestedSeries": "数控刀具 或 塑料切粒刀 或 微型磁力泵 中选一个，根据询价内容判断最匹配哪个，无法判断就填 数控刀具",
+  "uncertainFields": ["这里列出customerCompany/customerCountry/suggestedSeries里，你不是百分百确定、是推测/猜测出来的字段名，比如国家是从公司名或者电话区号猜的，就填 customerCountry；如果都是原文明确写出来的，这里就是空数组"],
+  "items": [
+    {
+      "name": "产品名称/型号",
+      "dc": "刀具直径 Dc，没提到就填空字符串",
+      "ds": "柄径 Ds，没提到就填空字符串",
+      "lc": "刃长 Lc，没提到就填空字符串",
+      "l": "全长 L，没提到就填空字符串",
+      "flutes": "刃数，没提到就填空字符串",
+      "material": "刀具材料，没提到就填空字符串",
+      "coating": "涂层，没提到就填空字符串",
+      "qty": "数量，纯数字文本，没提到就填空字符串",
+      "workpieceMaterial": "加工材料（被加工工件的材质），没提到就填空字符串",
+      "tolerance": "公差，没提到就填空字符串",
+      "otherRequirements": "其他技术要求，没有就填空字符串",
+      "uncertainFields": ["这一条货品里，你不是从原文直接读出来、而是推测/猜测出来的字段名列表，比如你从型号规格反推出了flutes刃数，原文并没写，就填 flutes；原文都是明确写的，这里就是空数组"]
+    }
+  ]
+}
+
+极其重要的规则：
+1. 只提取原文明确出现的信息。任何你不是从原文直接读出来、而是自己推测/猜测/根据经验补全的字段，都必须把该字段名加进对应的 uncertainFields 数组里，绝不能装作是确定的信息。
+2. 如果一个字段原文完全没提、你也没法推测，就填空字符串，不要瞎编一个看起来合理的值。
+3. 如果询价里问了多个型号，items数组就有多条。`;
+
+                let payload = { systemPrompt, userMessage: rfqText };
+
+                let res;
+                try {
+                    res = await fetchWithTimeout(`${WORKER_URL}/ai/parse-rfq`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Access-Token': ACCESS_TOKEN },
+                        body: JSON.stringify(payload)
+                    }, AI_REQUEST_TIMEOUT_MS);
+                } catch (e) {
+                    if (e.name === 'AbortError') throw new Error('请求超时（超过50秒没有响应），如果是型号特别多的RFQ可以尝试拆成几批分别解析，或者稍后重试');
+                    throw new Error('网络请求失败，请检查网络连接：' + e.message);
+                }
+
+                let data;
+                try {
+                    data = await res.json();
+                } catch (e) {
+                    throw new Error('中转站返回的内容不是有效的JSON（可能是Worker配置有问题）');
+                }
+
+                if (!res.ok) {
+                    throw new Error(data.error || `请求失败，状态码${res.status}`);
+                }
+
+                let text = (data.text || '').trim();
+                if (!text) throw new Error('AI返回了空内容，没有可用的解析结果');
+                text = text.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '').trim();
+
+                let extracted;
+                try {
+                    extracted = JSON.parse(text);
+                } catch (e) {
+                    throw new Error('AI返回的内容不是有效的JSON格式，解析失败。原始返回（前300字）：' + text.slice(0, 300));
+                }
+
+                let schemaError = validateExtractedSchema(extracted);
+                if (schemaError) {
+                    throw new Error('AI返回的结构不符合预期：' + schemaError + '。建议换一种方式重新粘贴内容再试一次。');
+                }
+
+                aiExtractedData = extracted;
+                renderAiExtractedResult(extracted);
+                document.getElementById('aiRfqStep1').classList.add('hidden');
+                document.getElementById('aiRfqStep2').classList.remove('hidden');
+                statusEl.innerText = '';
+            } catch (e) {
+                console.error('AI询价助手解析出错（不影响报价系统其他功能）:', e);
+                statusEl.style.color = '#dc2626';
+                statusEl.innerText = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        // 判断某个字段是不是AI自己标记为"不确定/推测出来"的，返回对应的高亮样式
+        function uncertainFieldAttrs(fieldKey, uncertainList) {
+            let isUncertain = Array.isArray(uncertainList) && uncertainList.includes(fieldKey);
+            return isUncertain ? ' style="border:2px solid #dc2626; background:#fef2f2;" title="⚠️ AI不确定，是推测出来的，请仔细核对"' : '';
+        }
+        function uncertainLabelSuffix(fieldKey, uncertainList) {
+            let isUncertain = Array.isArray(uncertainList) && uncertainList.includes(fieldKey);
+            return isUncertain ? ' <span style="color:#dc2626;">⚠️ AI不确定，请核对</span>' : '';
+        }
+
+        function renderAiExtractedResult(extracted) {
+            let topUncertain = extracted.uncertainFields || [];
+            let custEl = document.getElementById('aiExtractedCustomer');
+            let countryEl = document.getElementById('aiExtractedCountry');
+            custEl.value = extracted.customerCompany || '';
+            countryEl.value = extracted.customerCountry || '';
+            document.getElementById('aiExtractedSeries').value = extracted.suggestedSeries || '数控刀具';
+
+            // 客户/国家如果AI标了不确定，边框标红提醒
+            custEl.style.cssText = Array.isArray(topUncertain) && topUncertain.includes('customerCompany') ? 'border:2px solid #dc2626; background:#fef2f2;' : '';
+            countryEl.style.cssText = Array.isArray(topUncertain) && topUncertain.includes('customerCountry') ? 'border:2px solid #dc2626; background:#fef2f2;' : '';
+
+            let items = extracted.items || [];
+            let html = items.map((it, i) => {
+                let uf = it.uncertainFields || [];
+                let byCustomer = extracted.customerCompany ? queryPriceHistory(it.name, extracted.customerCompany) : [];
+                let byAll = queryPriceHistory(it.name, null);
+                let byCustomerHtml = byCustomer.length
+                    ? byCustomer.slice(0, 3).map(r => `<div>${formatDate(r.date)}　${escapeHtml(r.quoteNo)}　<b>${escapeHtml(r.price)} ${escapeHtml(r.currency)}</b>　${escapeHtml(r.spec)}</div>`).join('')
+                    : '<div style="color:#94a3b8;">该客户没有这个型号的历史报价记录</div>';
+                let byAllHtml = byAll.length
+                    ? byAll.slice(0, 5).map(r => `<div>${formatDate(r.date)}　${escapeHtml(r.customerCompany)}　<b>${escapeHtml(r.price)} ${escapeHtml(r.currency)}</b>　${escapeHtml(r.spec)}</div>`).join('')
+                    : '<div style="color:#94a3b8;">所有客户里都没有这个型号的历史报价记录</div>';
+
+                let fields = [
+                    ['name', '品名/型号', it.name],
+                    ['qty', '数量', it.qty],
+                    ['dc', 'Dc 直径', it.dc],
+                    ['ds', 'Ds 柄径', it.ds],
+                    ['lc', 'Lc 刃长', it.lc],
+                    ['l', 'L 全长', it.l],
+                    ['flutes', '刃数', it.flutes],
+                    ['material', '材料', it.material],
+                    ['coating', '涂层', it.coating],
+                    ['workpieceMaterial', '加工材料', it.workpieceMaterial],
+                    ['tolerance', '公差', it.tolerance],
+                    ['otherRequirements', '其他要求', it.otherRequirements],
+                ];
+                let fieldsHtml = fields.map(([key, label, val]) => {
+                    val = val || '';
+                    return `<div class="form-group"><label>${label}${uncertainLabelSuffix(key, uf)}</label><input type="text" class="ai-item-${key}" value="${escapeHtml(val)}"${uncertainFieldAttrs(key, uf)}></div>`;
+                }).join('');
+
+                return `
+                <div style="border:1px solid #e2e8f0; border-radius:10px; padding:12px; margin-bottom:12px;" data-idx="${i}">
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap:10px;">${fieldsHtml}</div>
+                    <div style="background:#f8fafc; border-radius:8px; padding:8px 12px; font-size:12px; margin-top:6px;">
+                        <div style="font-weight:600; color:#0e4b6e; margin-bottom:4px;">💰 历史价格参考（仅供参考，不代表本次报价，价格由你自己确认）</div>
+                        <div style="margin-bottom:6px;"><b>该客户之前报过：</b>${byCustomerHtml}</div>
+                        <div><b>其他客户报过：</b>${byAllHtml}</div>
+                    </div>
+                </div>`;
+            }).join('');
+            document.getElementById('aiExtractedItemsList').innerHTML = html || '<div style="color:#94a3b8;">AI没有提取到任何货品信息，建议返回重新解析，或者直接手动新建报价单</div>';
+        }
+
+        // 把审核过的AI提取结果，生成一份新报价单草稿（进入正常的报价单详情页，走原有保存流程，价格自己填）
+        // 这个函数只是"预填表单"，不会调用任何保存函数，报价单要不要真的存下来，完全取决于你自己点不点"保存报价单"
+        async function generateDraftFromAi() {
+            let customer = document.getElementById('aiExtractedCustomer').value.trim();
+            let country = document.getElementById('aiExtractedCountry').value.trim();
+            let series = document.getElementById('aiExtractedSeries').value;
+
+            let itemBlocks = document.querySelectorAll('#aiExtractedItemsList > div');
+            let draftItems = [];
+            itemBlocks.forEach(block => {
+                let get = cls => { let el = block.querySelector('.' + cls); return el ? el.value.trim() : ''; };
+                let name = get('ai-item-name');
+                let dc = get('ai-item-dc'), ds = get('ai-item-ds'), lc = get('ai-item-lc'), l = get('ai-item-l');
+                let flutes = get('ai-item-flutes'), material = get('ai-item-material'), coating = get('ai-item-coating');
+                let qty = get('ai-item-qty'), workpieceMaterial = get('ai-item-workpieceMaterial');
+                let tolerance = get('ai-item-tolerance'), other = get('ai-item-otherRequirements');
+                if (!name) return;
+
+                // 把Dc/Ds/Lc/L这些拼成规格文字，公差/加工材料/其他要求塞进备注类字段，具体按当前系列的字段结构分配
+                let specParts = [];
+                if (dc) specParts.push(`Dc${dc}`);
+                if (ds) specParts.push(`Ds${ds}`);
+                if (lc) specParts.push(`Lc${lc}`);
+                if (l) specParts.push(`L${l}`);
+                if (flutes) specParts.push(`${flutes}F`);
+                let spec = specParts.join('*');
+                let extraNote = [tolerance ? `公差:${tolerance}` : '', workpieceMaterial ? `加工材料:${workpieceMaterial}` : '', other].filter(Boolean).join('；');
+
+                if (series === '微型磁力泵') {
+                    draftItems.push({
+                        name, qty, price: '',
+                        spec: material || coating ? `Material: ${material}${coating ? '\nCoating: ' + coating : ''}` : '',
+                        specSub: { material, interface: '', accessories: coating },
+                        keySpec: extraNote, keySpecSub: { medium: '', flow: '', pressure: '', viscosity: '', particle: '', temperature: '', additionalCondition: extraNote }
+                    });
+                } else if (series === '塑料切粒刀') {
+                    draftItems.push({ name, spec: spec || extraNote, material, compatibleSystem: extraNote, price: '', moq: '', qty: '', amount: '' });
+                } else {
+                    draftItems.push({ name, spec, code: '', material: [material, coating].filter(Boolean).join(' / '), price: '', moq: '', qty, amount: '' });
+                }
+            });
+
+            if (draftItems.length === 0) { showToast('没有可用的货品信息，请检查一下', 'error'); return; }
+
+            closeModal('aiRfqModal');
+            await openQuoteDetail(null); // 走原有的"新建报价单"流程，不改变现有数据结构，价格栏完全空着等你填
+            selectSeries(series, true);
+            document.getElementById('itemsTableBody').innerHTML = '';
+            draftItems.forEach(it => addItemRow(it));
+            document.getElementById('fCustomerCompany').value = customer;
+            document.getElementById('fCustomerCountry').value = country;
+            document.getElementById('fInternalNote').value = '来自AI询价助手解析的草稿，价格待确认后保存（AI标注过不确定的字段请务必再核对一遍原文）';
+            showToast('已生成草稿，这只是预填表单，还没有保存——请核对信息、自己填好单价后点"保存报价单"');
         }
 
         // ====== 导出报价单（Excel固定排版，照参考模板样式，方便另存为PDF）======
