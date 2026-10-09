@@ -114,7 +114,7 @@
 
         <div id="listView">
             <div class="toolbar">
-                <input type="text" id="searchInput" placeholder="🔍 搜索客户/单号..." oninput="renderList()">
+                <input type="text" id="searchInput" placeholder="🔍 搜索客户/单号/品名/尺寸/SZSUNLIT Code..." oninput="renderList()">
                 <select id="filterSeries" onchange="renderList()">
                     <option value="">全部系列</option>
                     <option value="数控刀具">数控刀具</option>
@@ -1089,6 +1089,24 @@ OEM/ODM: Available`,
         }
 
         // ====== 列表渲染 ======
+        function itemsHay(q) {
+            return (q.items || []).map(it => `${it.name || ''} ${it.spec || ''} ${it.keySpec || ''} ${it.code || ''}`).join(' ');
+        }
+        function itemPreviewHtml(q, kw) {
+            let items = q.items || [];
+            if (!items.length) return '';
+            let words = kw ? kw.split(/\s+/).filter(Boolean) : [];
+            let line = it => `${it.name || ''} ${it.spec || it.keySpec || ''} ${it.code || ''}`.toLowerCase();
+            let hit = words.length ? items.filter(it => words.some(w => line(it).includes(w))) : [];
+            let show = (hit.length ? hit : items).slice(0, 4);
+            let rows = show.map(it => {
+                let parts = [it.name, it.spec || it.keySpec, it.code ? '[' + it.code + ']' : ''].filter(Boolean).map(escapeHtml).join(' · ');
+                return `<div>${parts}</div>`;
+            }).join('');
+            let more = (hit.length ? hit.length : items.length) > show.length ? `<div>…等${hit.length ? hit.length : items.length}条</div>` : '';
+            return `<div style="font-size:0.75rem;color:#64748b;margin-top:4px;line-height:1.5;">${rows}${more}</div>`;
+        }
+
         function renderList() {
             let kw = (document.getElementById('searchInput')?.value || '').trim().toLowerCase();
             let seriesFilter = document.getElementById('filterSeries').value;
@@ -1096,8 +1114,9 @@ OEM/ODM: Available`,
             let filtered = quotes.filter(q => {
                 if (q.deleted && !showDeleted) return false;
                 if (kw) {
-                    let hay = `${q.quoteNo} ${q.customerCompany}`.toLowerCase();
-                    if (!hay.includes(kw)) return false;
+                    let hay = `${q.quoteNo} ${q.customerCompany} ${itemsHay(q)}`.toLowerCase();
+                    // 多个关键词用空格分开，需全部命中（如 "铣刀 D10"）
+                    if (!kw.split(/\s+/).filter(Boolean).every(w => hay.includes(w))) return false;
                 }
                 if (seriesFilter && q.series !== seriesFilter) return false;
                 return true;
@@ -1116,7 +1135,7 @@ OEM/ODM: Available`,
                 return `<tr>
                     <td><span class="order-link" onclick="openQuoteDetail('${q.quoteNo}')">${q.quoteNo}</span></td>
                     <td><span class="badge badge-series">${escapeHtml(q.series)}</span></td>
-                    <td>${escapeHtml(q.customerCompany)}</td>
+                    <td>${escapeHtml(q.customerCompany)}${itemPreviewHtml(q, kw)}</td>
                     <td>${escapeHtml(q.customerCountry) || '—'}</td>
                     <td>${escapeHtml(q.currency) || 'USD'}</td>
                     <td>${formatDate(q.quoteDate)}</td>
