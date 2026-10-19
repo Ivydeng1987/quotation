@@ -61,6 +61,7 @@
         .pump-condition-block .pc-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
         .pump-condition-block .pc-field label { display: block; font-size: 11px; color: #64748b; margin-bottom: 2px; }
         .pump-condition-block .pc-field input, .pump-condition-block .pc-field textarea { width: 100%; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; font-family: inherit; }
+        .pump-condition-block .pc-hint { font-size: 11px; color: #94a3b8; margin-top: 3px; }
         .pump-offer-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 6px; }
         .pump-offer-table th { background: #f1f5f9; padding: 5px 6px; text-align: left; font-weight: 600; color: #475569; }
         .pump-offer-table td { padding: 3px; border-bottom: 1px solid #f1f5f9; }
@@ -447,7 +448,9 @@ OEM/ODM: Available`,
         };
 
         // ====== 微型磁力泵专用：多工况（Operating Conditions / Proposed Configuration / Offer）结构 ======
-        // 客户给几个工况，就对应几个这样的区块，每个区块自己的方案和报价互相独立
+        // 字段标签统一写成"English / 中文"格式：界面上中英文都显示；导出Excel时用 enOnly() 只取英文部分，
+        // 保证导出的文件是纯英文（可以直接发给海外客户），中文只是给你自己核对用的。
+        // 这些字段名/翻译是照着你给的工况表格图片原样搬过来的。
         const PUMP_OPERATING_FIELDS_LEFT = [
             { key: 'medium', label: 'Medium / 介质名称' },
             { key: 'flow', label: 'Flow / 流量及单位' },
@@ -467,7 +470,9 @@ OEM/ODM: Available`,
             { key: 'installation', label: 'Installation / 安装环境' },
             { key: 'control', label: 'Control / 调速控制方式' }
         ];
-        const PUMP_INPUT_NOTES_DEFAULT = 'Pressure: state bar(g) or bar(a). Provide viscosity at operating temperature and SDS if available.\n压力注明表压/绝压；黏度对应工况温度；可附介质SDS。';
+        // Input notes 这一栏：存进数据/导出到Excel的值只会是英文这一句；中文只作为界面上的提示文字显示，不会被存进字段值里
+        const PUMP_INPUT_NOTES_DEFAULT_EN = 'Pressure: state bar(g) or bar(a). Provide viscosity at operating temperature and SDS if available.';
+        const PUMP_INPUT_NOTES_HINT_ZH = '压力注明表压/绝压；黏度对应工况温度；可附介质SDS。（这行中文只是提示，不会出现在导出文件里，实际存的是上面输入框里的英文内容，你可以直接改）';
         const PUMP_CONFIG_FIELDS = [
             { key: 'pumpHeadModel', label: 'Pump head model / 泵头型号' },
             { key: 'pumpBodyMaterial', label: 'Pump body material / 泵体材料' },
@@ -477,10 +482,13 @@ OEM/ODM: Available`,
             { key: 'accessories', label: 'Accessories included / 配件' }
         ];
 
+        // 把"English / 中文"格式的标签只取英文部分，导出Excel时用，保证导出文件纯英文
+        function enOnly(label) { return String(label || '').split(' / ')[0]; }
+
         function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
         function makeEmptyPumpCondition() {
-            let oc = { inputNotes: PUMP_INPUT_NOTES_DEFAULT };
+            let oc = { inputNotes: PUMP_INPUT_NOTES_DEFAULT_EN };
             PUMP_OPERATING_FIELDS_LEFT.concat(PUMP_OPERATING_FIELDS_RIGHT).forEach(f => { oc[f.key] = ''; });
             let cfg = {};
             PUMP_CONFIG_FIELDS.forEach(f => { cfg[f.key] = ''; });
@@ -488,7 +496,7 @@ OEM/ODM: Available`,
                 id: genId(),
                 operatingConditions: oc,
                 proposedConfig: cfg,
-                offerItems: [{ description: 'Complete pump set / 整套泵组', cost: '', price: '', qty: '', amount: '' }]
+                offerItems: [{ description: 'Complete pump set', cost: '', price: '', qty: '', amount: '' }]
             };
         }
 
@@ -502,7 +510,7 @@ OEM/ODM: Available`,
             let first = items[0];
             let firstKeySpecSub = first.keySpecSub || {};
             let firstSpecSub = first.specSub || {};
-            let oc = { inputNotes: PUMP_INPUT_NOTES_DEFAULT };
+            let oc = { inputNotes: PUMP_INPUT_NOTES_DEFAULT_EN };
             PUMP_OPERATING_FIELDS_LEFT.concat(PUMP_OPERATING_FIELDS_RIGHT).forEach(f => { oc[f.key] = ''; });
             oc.medium = firstKeySpecSub.medium || '';
             oc.flow = firstKeySpecSub.flow || '';
@@ -543,12 +551,16 @@ OEM/ODM: Available`,
             return `
             <div class="pump-condition-block" data-cond-id="${cond.id}">
                 <div class="pc-header">
-                    <h3>🔧 工况 ${index + 1}</h3>
+                    <h3>🔧 Condition ${index + 1} / 工况 ${index + 1}</h3>
                     <button type="button" class="btn btn-danger btn-sm" onclick="removePumpCondition(this)">🗑️ 删除此工况</button>
                 </div>
                 <div class="pc-section-title">01 Operating Conditions / 工况信息</div>
                 <div class="pc-fields">${leftFieldsHtml}${rightFieldsHtml}</div>
-                <div class="pc-field" style="margin-top:8px;"><label>Input notes / 填写说明</label><textarea class="pc-oc" data-key="inputNotes" rows="2">${escapeHtml(oc.inputNotes || '')}</textarea></div>
+                <div class="pc-field" style="margin-top:8px;">
+                    <label>Input notes / 填写说明</label>
+                    <textarea class="pc-oc" data-key="inputNotes" rows="2">${escapeHtml(oc.inputNotes || '')}</textarea>
+                    <div class="pc-hint">${escapeHtml(PUMP_INPUT_NOTES_HINT_ZH)}</div>
+                </div>
 
                 <div class="pc-section-title">02 Proposed Configuration / 推荐方案</div>
                 <div class="pc-fields">${cfgFieldsHtml}</div>
@@ -586,7 +598,7 @@ OEM/ODM: Available`,
 
         function renumberPumpConditionHeaders() {
             document.querySelectorAll('#pumpConditionsList .pump-condition-block').forEach((block, i) => {
-                block.querySelector('.pc-header h3').innerText = `🔧 工况 ${i + 1}`;
+                block.querySelector('.pc-header h3').innerText = `🔧 Condition ${i + 1} / 工况 ${i + 1}`;
             });
         }
 
@@ -1765,7 +1777,7 @@ JSON格式：
                 if (series === '微型磁力泵') {
                     // 磁力泵现在是"工况+方案+报价"结构，AI只负责把识别到的型号预填进Offer表的Description，
                     // 工况(Operating Conditions)和方案(Proposed Configuration)字段比较专业，还是需要你自己核对原文手动填
-                    draftItems.push({ description: material || coating ? `${name}（${[material, coating].filter(Boolean).join(' / ')}）` : name, qty, price: '', cost: '', amount: '', pumpNote: extraNote });
+                    draftItems.push({ description: material || coating ? `${name} (${[material, coating].filter(Boolean).join(' / ')})` : name, qty, price: '', cost: '', amount: '', pumpNote: extraNote });
                 } else if (series === '塑料切粒刀') {
                     draftItems.push({ name, spec: spec || extraNote, material, compatibleSystem: extraNote, price: '', moq: '', qty: '', amount: '' });
                 } else {
@@ -1782,7 +1794,7 @@ JSON格式：
                 let cond = makeEmptyPumpCondition();
                 cond.offerItems = draftItems.map(it => ({ description: it.description, cost: '', price: '', qty: it.qty || '', amount: '' }));
                 let noteParts = draftItems.map(it => it.pumpNote).filter(Boolean);
-                if (noteParts.length) cond.operatingConditions.otherNeeds = noteParts.join('；');
+                if (noteParts.length) cond.operatingConditions.otherNeeds = noteParts.join('; ');
                 renderPumpConditions([cond]);
             } else {
                 document.getElementById('itemsTableBody').innerHTML = '';
@@ -1937,6 +1949,8 @@ JSON格式：
         }
 
         // ====== 磁力泵专用导出：每个工况一个独立区块（01工况/02方案/03报价），纵向依次排列在同一份文件里 ======
+        // 注意：导出的Excel里所有标签/表头/区块标题都通过 enOnly() 只取英文，保证导出文件是纯英文，
+        // 中英对照只在网页界面上显示，给你自己核对用。字段里你自己填的内容（比如备注、工况数值）是什么就导出什么，不会自动翻译。
         function exportPumpQuote(q) {
             let cfg = SERIES_CONFIG['微型磁力泵'];
             let conditions = getPumpConditionsForQuote(q);
@@ -1980,30 +1994,30 @@ JSON格式：
                 manualLines.forEach(l => { total += Math.max(1, Math.ceil(l.length / charsPerLine)); });
                 return Math.max(1, total);
             }
-            // 一行放两组"标签+值"：label1(col0) value1(col1-2合并) label2(col3) value2(col4-5合并)
+            // 一行放两组"标签+值"：label1(col0) value1(col1-2合并) label2(col3) value2(col4-5合并)——标签统一只取英文(enOnly)
             function labelValueRow(label1, val1, label2, val2) {
                 let lines1 = estimateLines(val1, 20), lines2 = estimateLines(val2, 18);
                 let h = Math.max(20, Math.max(lines1, lines2) * 14 + 8);
                 let r = addRow([
-                    cell(label1, boldFont, leftAlign),
+                    cell(enOnly(label1), boldFont, leftAlign),
                     cell(val1, normalFont, leftAlign, null, creamFill), '',
-                    cell(label2 || '', boldFont, leftAlign),
+                    cell(label2 ? enOnly(label2) : '', boldFont, leftAlign),
                     cell(label2 ? val2 : '', normalFont, leftAlign, null, creamFill), ''
                 ], h);
                 merges.push({ s: { r, c: 1 }, e: { r, c: 2 } });
                 merges.push({ s: { r, c: 4 }, e: { r, c: 5 } });
                 return r;
             }
-            // 一行放一组"标签+宽值"：label(col0) value(col1-5合并，跨5列)
+            // 一行放一组"标签+宽值"：label(col0) value(col1-5合并，跨5列)——标签统一只取英文(enOnly)
             function wideLabelValueRow(label, val) {
                 let lines = estimateLines(val, 70);
                 let h = Math.max(20, lines * 14 + 8);
-                let r = addRow([cell(label, boldFont, leftAlign), cell(val, normalFont, leftAlign, null, creamFill), ...fillRow(4)], h);
+                let r = addRow([cell(enOnly(label), boldFont, leftAlign), cell(val, normalFont, leftAlign, null, creamFill), ...fillRow(4)], h);
                 merges.push({ s: { r, c: 1 }, e: { r, c: 5 } });
                 return r;
             }
             function sectionBar(text) {
-                let r = addRow([cell(text, sectionFont, leftAlign, null, navyFill), ...fillRow(colCount - 1)], 22);
+                let r = addRow([cell(enOnly(text), sectionFont, leftAlign, null, navyFill), ...fillRow(colCount - 1)], 22);
                 for (let c = 1; c < colCount; c++) aoa[r][c] = cell('', sectionFont, leftAlign, null, navyFill);
                 merges.push({ s: { r, c: 0 }, e: { r, c: colCount - 1 } });
                 return r;
@@ -2032,13 +2046,13 @@ JSON格式：
 
             conditions.forEach((c, idx) => {
                 if (conditions.length > 1) {
-                    let rCond = addRow([cell(`Condition ${idx + 1} / 工况 ${idx + 1}`, { name: 'Arial', sz: 12, bold: true, color: { rgb: 'FFFFFF' } }, leftAlign, null, orangeFill), ...fillRow(colCount - 1)], 24);
+                    let rCond = addRow([cell(`Condition ${idx + 1}`, { name: 'Arial', sz: 12, bold: true, color: { rgb: 'FFFFFF' } }, leftAlign, null, orangeFill), ...fillRow(colCount - 1)], 24);
                     for (let c2 = 1; c2 < colCount; c2++) aoa[rCond][c2] = cell('', normalFont, leftAlign, null, orangeFill);
                     merges.push({ s: { r: rCond, c: 0 }, e: { r: rCond, c: colCount - 1 } });
                 }
 
                 // 01 Operating Conditions
-                sectionBar('01  Operating Conditions / 工况信息');
+                sectionBar('01  Operating Conditions');
                 let oc = c.operatingConditions || {};
                 let maxLen = Math.max(PUMP_OPERATING_FIELDS_LEFT.length, PUMP_OPERATING_FIELDS_RIGHT.length);
                 for (let i = 0; i < maxLen; i++) {
@@ -2046,21 +2060,21 @@ JSON格式：
                     let rf = PUMP_OPERATING_FIELDS_RIGHT[i];
                     labelValueRow(lf ? lf.label : '', lf ? (oc[lf.key] || '') : '', rf ? rf.label : '', rf ? (oc[rf.key] || '') : '');
                 }
-                wideLabelValueRow('Input notes / 填写说明', oc.inputNotes || '');
+                wideLabelValueRow('Input notes', oc.inputNotes || '');
                 addRow(fillRow(colCount), 6);
 
                 // 02 Proposed Configuration
-                sectionBar('02  Proposed Configuration / 推荐方案');
+                sectionBar('02  Proposed Configuration');
                 let pc = c.proposedConfig || {};
                 PUMP_CONFIG_FIELDS.forEach(f => { wideLabelValueRow(f.label, pc[f.key] || ''); });
                 addRow(fillRow(colCount), 6);
 
                 // 03 Offer
-                sectionBar('03  Offer / 报价');
+                sectionBar('03  Offer');
                 let offerHeaderCells = [
                     cell('No.', headFont, centerAlign, border, orangeFill),
-                    cell('Description / 产品及配置', headFont, centerAlign, border, orangeFill), '',
-                    cell('Qty / 数量', headFont, centerAlign, border, orangeFill),
+                    cell('Description', headFont, centerAlign, border, orangeFill), '',
+                    cell('Qty', headFont, centerAlign, border, orangeFill),
                     cell(`Unit price (${currency})`, headFont, centerAlign, border, orangeFill),
                     cell(`Amount (${currency})`, headFont, centerAlign, border, orangeFill)
                 ];
@@ -2111,7 +2125,7 @@ JSON格式：
             let wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, '报价单');
             XLSX.writeFile(wb, `报价单_${q.quoteNo}.xlsx`);
-            showToast('报价单已导出，用Excel打开后可直接"文件→导出→创建PDF"另存为PDF');
+            showToast('报价单已导出（纯英文），用Excel打开后可直接"文件→导出→创建PDF"另存为PDF');
         }
     </script>
 </body>
