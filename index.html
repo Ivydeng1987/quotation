@@ -62,6 +62,9 @@
         .pump-condition-block .pc-field label { display: block; font-size: 11px; color: #64748b; margin-bottom: 2px; }
         .pump-condition-block .pc-field input, .pump-condition-block .pc-field textarea { width: 100%; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; font-family: inherit; }
         .pump-condition-block .pc-hint { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+        .pump-solution-block { border: 1px dashed #ED7D31; border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: #fffdf9; }
+        .pump-solution-block .ps-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .pump-solution-block .ps-header h4 { font-size: 13px; color: #c2570c; }
         .pump-offer-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 6px; }
         .pump-offer-table th { background: #f1f5f9; padding: 5px 6px; text-align: left; font-weight: 600; color: #475569; }
         .pump-offer-table td { padding: 3px; border-bottom: 1px solid #f1f5f9; }
@@ -440,6 +443,7 @@ OEM/ODM: Available`,
                 whyChooseUs: [
                     'Sealless Magnetic Drive — Zero Leakage',
                     'Engineered for Continuous Industrial Operation',
+                    'Capable of Dry-Running for a Limited Duration at Certain Speeds',
                     'Wide Pressure & Temperature Capability',
                     'Long Service Life & Stable Performance',
                     'OEM Customization & Engineering Support'
@@ -487,24 +491,43 @@ OEM/ODM: Available`,
 
         function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
-        function makeEmptyPumpCondition() {
-            let oc = { inputNotes: PUMP_INPUT_NOTES_DEFAULT_EN };
-            PUMP_OPERATING_FIELDS_LEFT.concat(PUMP_OPERATING_FIELDS_RIGHT).forEach(f => { oc[f.key] = ''; });
+        // 结构：一个工况(condition) = 工况信息 + 若干个方案(solutions)；每个方案 = 推荐配置 + 自己的报价明细
+        function makeEmptyPumpSolution() {
             let cfg = {};
             PUMP_CONFIG_FIELDS.forEach(f => { cfg[f.key] = ''; });
             return {
                 id: genId(),
-                operatingConditions: oc,
                 proposedConfig: cfg,
                 offerItems: [{ description: 'Complete pump set', cost: '', price: '', qty: '', amount: '' }]
             };
+        }
+
+        function makeEmptyPumpCondition() {
+            let oc = { inputNotes: PUMP_INPUT_NOTES_DEFAULT_EN };
+            PUMP_OPERATING_FIELDS_LEFT.concat(PUMP_OPERATING_FIELDS_RIGHT).forEach(f => { oc[f.key] = ''; });
+            return {
+                id: genId(),
+                operatingConditions: oc,
+                solutions: [makeEmptyPumpSolution()]
+            };
+        }
+
+        // 兼容上一版"一个工况只有一个方案"的数据：自动包成 solutions 数组（只在内存里转换，点保存才落盘）
+        function normalizePumpCondition(c) {
+            if (Array.isArray(c.solutions) && c.solutions.length > 0) return c;
+            let sol = {
+                id: genId(),
+                proposedConfig: c.proposedConfig || makeEmptyPumpSolution().proposedConfig,
+                offerItems: Array.isArray(c.offerItems) ? c.offerItems : []
+            };
+            return { id: c.id || genId(), operatingConditions: c.operatingConditions || {}, solutions: [sol] };
         }
 
         // 把某张报价单的工况数据取出来：已经是新结构就直接用；还是老的单张表格格式（items），
         // 就自动迁移——整单当成一个工况，原来表格里的货品行变成这个工况下的报价明细。
         // 注意：这个函数只是"读出来给界面用"，不会改写quotes数组本身，真正落盘要等用户点保存。
         function getPumpConditionsForQuote(q) {
-            if (Array.isArray(q.conditions) && q.conditions.length > 0) return q.conditions;
+            if (Array.isArray(q.conditions) && q.conditions.length > 0) return q.conditions.map(normalizePumpCondition);
             let items = Array.isArray(q.items) ? q.items : [];
             if (items.length === 0) return [makeEmptyPumpCondition()];
             let first = items[0];
@@ -532,22 +555,42 @@ OEM/ODM: Available`,
                 qty: it.qty || '',
                 amount: it.amount || ''
             }));
-            return [{ id: genId(), operatingConditions: oc, proposedConfig: cfg, offerItems }];
+            return [{ id: genId(), operatingConditions: oc, solutions: [{ id: genId(), proposedConfig: cfg, offerItems }] }];
+        }
+
+        function pumpSolutionBlockHtml(sol, index) {
+            let cfg = sol.proposedConfig || {};
+            let cfgFieldsHtml = PUMP_CONFIG_FIELDS.map(f => `
+                <div class="pc-field"><label>${f.label}</label><input type="text" class="pc-cfg" data-key="${f.key}" value="${escapeHtml(cfg[f.key] || '')}"></div>
+            `).join('');
+            let offerRowsHtml = (sol.offerItems || []).map(it => pumpOfferRowHtml(it)).join('');
+            return `
+            <div class="pump-solution-block" data-sol-id="${sol.id || genId()}">
+                <div class="ps-header">
+                    <h4>💡 Option ${index + 1} / 方案 ${index + 1}</h4>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="removePumpSolution(this)">🗑️ 删除此方案</button>
+                </div>
+                <div class="pc-section-title">02 Proposed Configuration / 推荐方案</div>
+                <div class="pc-fields">${cfgFieldsHtml}</div>
+                <div class="pc-section-title">03 Offer / 报价</div>
+                <table class="pump-offer-table">
+                    <thead><tr><th style="width:5%">No.</th><th style="width:40%">Description / 产品及配置</th><th style="width:15%">Qty / 数量</th><th style="width:12%">成本价</th><th style="width:15%">Unit price / 单价</th><th style="width:15%">Amount / 金额</th><th style="width:5%"></th></tr></thead>
+                    <tbody class="pc-offer-body">${offerRowsHtml}</tbody>
+                </table>
+                <button type="button" class="btn btn-outline btn-sm" onclick="addPumpOfferRow(this)">➕ 添加产品行</button>
+            </div>`;
         }
 
         function pumpConditionBlockHtml(cond, index) {
+            cond = normalizePumpCondition(cond);
             let oc = cond.operatingConditions || {};
-            let cfg = cond.proposedConfig || {};
             let leftFieldsHtml = PUMP_OPERATING_FIELDS_LEFT.map(f => `
                 <div class="pc-field"><label>${f.label}</label><input type="text" class="pc-oc" data-key="${f.key}" value="${escapeHtml(oc[f.key] || '')}"></div>
             `).join('');
             let rightFieldsHtml = PUMP_OPERATING_FIELDS_RIGHT.map(f => `
                 <div class="pc-field"><label>${f.label}</label><input type="text" class="pc-oc" data-key="${f.key}" value="${escapeHtml(oc[f.key] || '')}"></div>
             `).join('');
-            let cfgFieldsHtml = PUMP_CONFIG_FIELDS.map(f => `
-                <div class="pc-field"><label>${f.label}</label><input type="text" class="pc-cfg" data-key="${f.key}" value="${escapeHtml(cfg[f.key] || '')}"></div>
-            `).join('');
-            let offerRowsHtml = (cond.offerItems || []).map(it => pumpOfferRowHtml(it)).join('');
+            let solutionsHtml = cond.solutions.map((s, i) => pumpSolutionBlockHtml(s, i)).join('');
             return `
             <div class="pump-condition-block" data-cond-id="${cond.id}">
                 <div class="pc-header">
@@ -562,15 +605,8 @@ OEM/ODM: Available`,
                     <div class="pc-hint">${escapeHtml(PUMP_INPUT_NOTES_HINT_ZH)}</div>
                 </div>
 
-                <div class="pc-section-title">02 Proposed Configuration / 推荐方案</div>
-                <div class="pc-fields">${cfgFieldsHtml}</div>
-
-                <div class="pc-section-title">03 Offer / 报价</div>
-                <table class="pump-offer-table">
-                    <thead><tr><th style="width:5%">No.</th><th style="width:40%">Description / 产品及配置</th><th style="width:15%">Qty / 数量</th><th style="width:12%">成本价</th><th style="width:15%">Unit price / 单价</th><th style="width:15%">Amount / 金额</th><th style="width:5%"></th></tr></thead>
-                    <tbody class="pc-offer-body">${offerRowsHtml}</tbody>
-                </table>
-                <button type="button" class="btn btn-outline btn-sm" onclick="addPumpOfferRow(this)">➕ 添加产品行</button>
+                <div class="pc-solutions">${solutionsHtml}</div>
+                <button type="button" class="btn btn-outline btn-sm" onclick="addPumpSolution(this)">➕ 给这个工况新增一个方案</button>
             </div>`;
         }
 
@@ -596,6 +632,28 @@ OEM/ODM: Available`,
             list.querySelectorAll('.pc-offer-body').forEach(tb => renumberPumpOfferRows(tb));
         }
 
+        function renumberPumpSolutionHeaders(condBlock) {
+            condBlock.querySelectorAll('.pump-solution-block').forEach((sb, i) => {
+                sb.querySelector('.ps-header h4').innerText = `💡 Option ${i + 1} / 方案 ${i + 1}`;
+            });
+        }
+
+        function addPumpSolution(btnEl) {
+            let condBlock = btnEl.closest('.pump-condition-block');
+            let container = condBlock.querySelector('.pc-solutions');
+            let count = container.querySelectorAll('.pump-solution-block').length;
+            container.insertAdjacentHTML('beforeend', pumpSolutionBlockHtml(makeEmptyPumpSolution(), count));
+            renumberPumpOfferRows(container.lastElementChild.querySelector('.pc-offer-body'));
+        }
+
+        function removePumpSolution(btnEl) {
+            let condBlock = btnEl.closest('.pump-condition-block');
+            if (condBlock.querySelectorAll('.pump-solution-block').length <= 1) { showToast('每个工况至少要保留一个方案', 'error'); return; }
+            if (!confirm('删除这个方案（含它的报价）？')) return;
+            btnEl.closest('.pump-solution-block').remove();
+            renumberPumpSolutionHeaders(condBlock);
+        }
+
         function renumberPumpConditionHeaders() {
             document.querySelectorAll('#pumpConditionsList .pump-condition-block').forEach((block, i) => {
                 block.querySelector('.pc-header h3').innerText = `🔧 Condition ${i + 1} / 工况 ${i + 1}`;
@@ -606,7 +664,7 @@ OEM/ODM: Available`,
             let list = document.getElementById('pumpConditionsList');
             list.insertAdjacentHTML('beforeend', pumpConditionBlockHtml(cond || makeEmptyPumpCondition(), document.querySelectorAll('#pumpConditionsList .pump-condition-block').length));
             let lastBlock = list.lastElementChild;
-            if (lastBlock) renumberPumpOfferRows(lastBlock.querySelector('.pc-offer-body'));
+            if (lastBlock) lastBlock.querySelectorAll('.pc-offer-body').forEach(tb => renumberPumpOfferRows(tb));
         }
 
         function removePumpCondition(btnEl) {
@@ -618,7 +676,7 @@ OEM/ODM: Available`,
         }
 
         function addPumpOfferRow(btnEl) {
-            let tbody = btnEl.closest('.pump-condition-block').querySelector('.pc-offer-body');
+            let tbody = btnEl.closest('.pump-solution-block').querySelector('.pc-offer-body');
             tbody.insertAdjacentHTML('beforeend', pumpOfferRowHtml());
             renumberPumpOfferRows(tbody);
         }
@@ -683,18 +741,22 @@ OEM/ODM: Available`,
             blocks.forEach(block => {
                 let oc = {};
                 block.querySelectorAll('.pc-oc').forEach(inp => { oc[inp.dataset.key] = inp.value.trim(); });
-                let cfg = {};
-                block.querySelectorAll('.pc-cfg').forEach(inp => { cfg[inp.dataset.key] = inp.value.trim(); });
-                let offerItems = [];
-                block.querySelectorAll('.pc-offer-body tr').forEach(tr => {
-                    let description = tr.querySelector('.pc-offer-description').value.trim();
-                    let cost = tr.querySelector('.pc-offer-cost').value.trim();
-                    let price = tr.querySelector('.pc-offer-price').value.trim();
-                    let qty = tr.querySelector('.pc-offer-qty').value.trim();
-                    let amount = tr.querySelector('.pc-offer-amount').value.trim();
-                    if (description || cost || price || qty || amount) offerItems.push({ description, cost, price, qty, amount });
+                let solutions = [];
+                block.querySelectorAll('.pump-solution-block').forEach(sb => {
+                    let cfg = {};
+                    sb.querySelectorAll('.pc-cfg').forEach(inp => { cfg[inp.dataset.key] = inp.value.trim(); });
+                    let offerItems = [];
+                    sb.querySelectorAll('.pc-offer-body tr').forEach(tr => {
+                        let description = tr.querySelector('.pc-offer-description').value.trim();
+                        let cost = tr.querySelector('.pc-offer-cost').value.trim();
+                        let price = tr.querySelector('.pc-offer-price').value.trim();
+                        let qty = tr.querySelector('.pc-offer-qty').value.trim();
+                        let amount = tr.querySelector('.pc-offer-amount').value.trim();
+                        if (description || cost || price || qty || amount) offerItems.push({ description, cost, price, qty, amount });
+                    });
+                    solutions.push({ id: sb.dataset.solId || genId(), proposedConfig: cfg, offerItems });
                 });
-                conditions.push({ id: block.dataset.condId || genId(), operatingConditions: oc, proposedConfig: cfg, offerItems });
+                conditions.push({ id: block.dataset.condId || genId(), operatingConditions: oc, solutions });
             });
             return conditions;
         }
@@ -703,7 +765,7 @@ OEM/ODM: Available`,
         function flattenPumpOfferItems(q) {
             let conditions = getPumpConditionsForQuote(q);
             let flat = [];
-            conditions.forEach(c => { (c.offerItems || []).forEach(it => flat.push(it)); });
+            conditions.forEach(c => { (c.solutions || []).forEach(s => { (s.offerItems || []).forEach(it => flat.push(it)); }); });
             return flat;
         }
 
@@ -1329,7 +1391,7 @@ OEM/ODM: Available`,
             let conditions = [];
             if (currentSeries === '微型磁力泵') {
                 conditions = getPumpConditionsFromForm();
-                let hasAnyOffer = conditions.some(c => (c.offerItems || []).some(it => it.description));
+                let hasAnyOffer = conditions.some(c => (c.solutions || []).some(s => (s.offerItems || []).some(it => it.description)));
                 if (!hasAnyOffer) { showToast('请至少给一个工况填一条报价明细（Description）', 'error'); return; }
             } else {
                 items = getItemsFromForm();
@@ -1400,8 +1462,10 @@ OEM/ODM: Available`,
                 let conditions = getPumpConditionsForQuote(q);
                 let parts = [];
                 conditions.forEach(c => {
-                    (c.offerItems || []).forEach(it => parts.push(it.description || ''));
-                    parts.push(Object.values(c.proposedConfig || {}).join(' '));
+                    (c.solutions || []).forEach(s => {
+                        (s.offerItems || []).forEach(it => parts.push(it.description || ''));
+                        parts.push(Object.values(s.proposedConfig || {}).join(' '));
+                    });
                     parts.push(Object.values(c.operatingConditions || {}).join(' '));
                 });
                 return parts.join(' ');
@@ -1792,7 +1856,7 @@ JSON格式：
             selectSeries(series, true);
             if (series === '微型磁力泵') {
                 let cond = makeEmptyPumpCondition();
-                cond.offerItems = draftItems.map(it => ({ description: it.description, cost: '', price: '', qty: it.qty || '', amount: '' }));
+                cond.solutions[0].offerItems = draftItems.map(it => ({ description: it.description, cost: '', price: '', qty: it.qty || '', amount: '' }));
                 let noteParts = draftItems.map(it => it.pumpNote).filter(Boolean);
                 if (noteParts.length) cond.operatingConditions.otherNeeds = noteParts.join('; ');
                 renderPumpConditions([cond]);
@@ -2063,9 +2127,16 @@ JSON格式：
                 wideLabelValueRow('Input notes', oc.inputNotes || '');
                 addRow(fillRow(colCount), 6);
 
+                (c.solutions || []).forEach((sol, sIdx) => {
+                if ((c.solutions || []).length > 1) {
+                    let rOpt = addRow([cell(`Option ${sIdx + 1}`, { name: 'Arial', sz: 11, bold: true }, leftAlign, null, grayFill), ...fillRow(colCount - 1)], 22);
+                    for (let c3 = 1; c3 < colCount; c3++) aoa[rOpt][c3] = cell('', normalFont, leftAlign, null, grayFill);
+                    merges.push({ s: { r: rOpt, c: 0 }, e: { r: rOpt, c: colCount - 1 } });
+                }
+
                 // 02 Proposed Configuration
                 sectionBar('02  Proposed Configuration');
-                let pc = c.proposedConfig || {};
+                let pc = sol.proposedConfig || {};
                 PUMP_CONFIG_FIELDS.forEach(f => { wideLabelValueRow(f.label, pc[f.key] || ''); });
                 addRow(fillRow(colCount), 6);
 
@@ -2081,7 +2152,7 @@ JSON格式：
                 let rOfferHead = addRow(offerHeaderCells, 26);
                 merges.push({ s: { r: rOfferHead, c: 1 }, e: { r: rOfferHead, c: 2 } });
 
-                (c.offerItems || []).forEach((it, i) => {
+                (sol.offerItems || []).forEach((it, i) => {
                     let lines = estimateLines(it.description, 40);
                     let r = addRow([
                         cell(i + 1, normalFont, centerAlign, border),
@@ -2093,7 +2164,10 @@ JSON格式：
                     merges.push({ s: { r, c: 1 }, e: { r, c: 2 } });
                 });
 
-                addRow(fillRow(colCount), 14);
+                addRow(fillRow(colCount), 10);
+                });
+
+                addRow(fillRow(colCount), 8);
             });
 
             // Remark
