@@ -54,6 +54,18 @@
         .items-table .del-row { color: #dc2626; cursor: pointer; background: none; border: none; font-size: 14px; }
         .items-table .seq-cell { text-align: center; color: #94a3b8; }
 
+        .pump-condition-block { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; background: #fafbfc; }
+        .pump-condition-block .pc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .pump-condition-block .pc-header h3 { font-size: 13px; color: #0e4b6e; }
+        .pump-condition-block .pc-section-title { font-size: 12px; font-weight: 700; color: white; background: #0e4b6e; padding: 5px 10px; border-radius: 6px; margin: 10px 0 8px; }
+        .pump-condition-block .pc-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+        .pump-condition-block .pc-field label { display: block; font-size: 11px; color: #64748b; margin-bottom: 2px; }
+        .pump-condition-block .pc-field input, .pump-condition-block .pc-field textarea { width: 100%; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; font-family: inherit; }
+        .pump-offer-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 6px; }
+        .pump-offer-table th { background: #f1f5f9; padding: 5px 6px; text-align: left; font-weight: 600; color: #475569; }
+        .pump-offer-table td { padding: 3px; border-bottom: 1px solid #f1f5f9; }
+        .pump-offer-table input { width: 100%; padding: 5px 6px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; font-family: inherit; }
+
         .table-wrapper { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); overflow-x: auto; }
         table.list-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 900px; }
         table.list-table th { background: #f8fafc; padding: 8px 10px; text-align: left; font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0; }
@@ -195,13 +207,19 @@
                     </div>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="genericItemsWrapper">
                     <label>货品明细</label>
                     <table class="items-table" id="itemsTable">
                         <thead id="itemsTableHead"></thead>
                         <tbody id="itemsTableBody"></tbody>
                     </table>
                     <button class="btn btn-outline btn-sm" onclick="addItemRow()">➕ 添加一行</button>
+                </div>
+
+                <div class="form-group hidden" id="pumpConditionsWrapper">
+                    <label>工况 / 方案 / 报价（客户给了几个工况，就加几个——每个工况单独给方案和报价）</label>
+                    <div id="pumpConditionsList"></div>
+                    <button class="btn btn-outline btn-sm" onclick="addPumpCondition()">➕ 新增一个工况</button>
                 </div>
 
                 <div class="form-group"><label>Remark（备注条款，已按系列预填默认文字，可自由修改，会出现在导出的报价单上）</label><textarea id="fRemark" rows="6"></textarea></div>
@@ -427,6 +445,255 @@ OEM/ODM: Available`,
                 ]
             }
         };
+
+        // ====== 微型磁力泵专用：多工况（Operating Conditions / Proposed Configuration / Offer）结构 ======
+        // 客户给几个工况，就对应几个这样的区块，每个区块自己的方案和报价互相独立
+        const PUMP_OPERATING_FIELDS_LEFT = [
+            { key: 'medium', label: 'Medium / 介质名称' },
+            { key: 'flow', label: 'Flow / 流量及单位' },
+            { key: 'systemPressure', label: 'System pressure / 系统压力' },
+            { key: 'viscosity', label: 'Viscosity / 黏度及单位' },
+            { key: 'particles', label: 'Particles / 颗粒及粒径' },
+            { key: 'suctionLift', label: 'Suction lift / 吸程 m' },
+            { key: 'supply', label: 'Supply / 电源规格' },
+            { key: 'otherNeeds', label: 'Other needs / 其他要求' }
+        ];
+        const PUMP_OPERATING_FIELDS_RIGHT = [
+            { key: 'strongAcidAlkali', label: 'Strong acid/alkali? / 是否强酸强碱' },
+            { key: 'minMaxFlow', label: 'Min-max flow / 调节范围' },
+            { key: 'inletOutletDp', label: 'Inlet-outlet ΔP / 进出口压差' },
+            { key: 'temperature', label: 'Temperature / 温度°C' },
+            { key: 'duty', label: 'Duty / 连续或间歇运行' },
+            { key: 'installation', label: 'Installation / 安装环境' },
+            { key: 'control', label: 'Control / 调速控制方式' }
+        ];
+        const PUMP_INPUT_NOTES_DEFAULT = 'Pressure: state bar(g) or bar(a). Provide viscosity at operating temperature and SDS if available.\n压力注明表压/绝压；黏度对应工况温度；可附介质SDS。';
+        const PUMP_CONFIG_FIELDS = [
+            { key: 'pumpHeadModel', label: 'Pump head model / 泵头型号' },
+            { key: 'pumpBodyMaterial', label: 'Pump body material / 泵体材料' },
+            { key: 'gearMaterial', label: 'Gear material / 齿轮材料' },
+            { key: 'shaftMaterial', label: 'Shaft material / 轴材料' },
+            { key: 'portConnection', label: 'Port connection / 接口规格' },
+            { key: 'accessories', label: 'Accessories included / 配件' }
+        ];
+
+        function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+        function makeEmptyPumpCondition() {
+            let oc = { inputNotes: PUMP_INPUT_NOTES_DEFAULT };
+            PUMP_OPERATING_FIELDS_LEFT.concat(PUMP_OPERATING_FIELDS_RIGHT).forEach(f => { oc[f.key] = ''; });
+            let cfg = {};
+            PUMP_CONFIG_FIELDS.forEach(f => { cfg[f.key] = ''; });
+            return {
+                id: genId(),
+                operatingConditions: oc,
+                proposedConfig: cfg,
+                offerItems: [{ description: 'Complete pump set / 整套泵组', cost: '', price: '', qty: '', amount: '' }]
+            };
+        }
+
+        // 把某张报价单的工况数据取出来：已经是新结构就直接用；还是老的单张表格格式（items），
+        // 就自动迁移——整单当成一个工况，原来表格里的货品行变成这个工况下的报价明细。
+        // 注意：这个函数只是"读出来给界面用"，不会改写quotes数组本身，真正落盘要等用户点保存。
+        function getPumpConditionsForQuote(q) {
+            if (Array.isArray(q.conditions) && q.conditions.length > 0) return q.conditions;
+            let items = Array.isArray(q.items) ? q.items : [];
+            if (items.length === 0) return [makeEmptyPumpCondition()];
+            let first = items[0];
+            let firstKeySpecSub = first.keySpecSub || {};
+            let firstSpecSub = first.specSub || {};
+            let oc = { inputNotes: PUMP_INPUT_NOTES_DEFAULT };
+            PUMP_OPERATING_FIELDS_LEFT.concat(PUMP_OPERATING_FIELDS_RIGHT).forEach(f => { oc[f.key] = ''; });
+            oc.medium = firstKeySpecSub.medium || '';
+            oc.flow = firstKeySpecSub.flow || '';
+            oc.systemPressure = firstKeySpecSub.pressure || '';
+            oc.viscosity = firstKeySpecSub.viscosity || '';
+            oc.particles = firstKeySpecSub.particle || '';
+            oc.temperature = firstKeySpecSub.temperature || '';
+            oc.otherNeeds = firstKeySpecSub.additionalCondition || '';
+            let cfg = {};
+            PUMP_CONFIG_FIELDS.forEach(f => { cfg[f.key] = ''; });
+            cfg.pumpHeadModel = first.name || '';
+            cfg.pumpBodyMaterial = firstSpecSub.material || '';
+            cfg.portConnection = firstSpecSub.interface || '';
+            cfg.accessories = firstSpecSub.accessories || '';
+            let offerItems = items.map(it => ({
+                description: it.name || '',
+                cost: it.cost || '',
+                price: it.price || '',
+                qty: it.qty || '',
+                amount: it.amount || ''
+            }));
+            return [{ id: genId(), operatingConditions: oc, proposedConfig: cfg, offerItems }];
+        }
+
+        function pumpConditionBlockHtml(cond, index) {
+            let oc = cond.operatingConditions || {};
+            let cfg = cond.proposedConfig || {};
+            let leftFieldsHtml = PUMP_OPERATING_FIELDS_LEFT.map(f => `
+                <div class="pc-field"><label>${f.label}</label><input type="text" class="pc-oc" data-key="${f.key}" value="${escapeHtml(oc[f.key] || '')}"></div>
+            `).join('');
+            let rightFieldsHtml = PUMP_OPERATING_FIELDS_RIGHT.map(f => `
+                <div class="pc-field"><label>${f.label}</label><input type="text" class="pc-oc" data-key="${f.key}" value="${escapeHtml(oc[f.key] || '')}"></div>
+            `).join('');
+            let cfgFieldsHtml = PUMP_CONFIG_FIELDS.map(f => `
+                <div class="pc-field"><label>${f.label}</label><input type="text" class="pc-cfg" data-key="${f.key}" value="${escapeHtml(cfg[f.key] || '')}"></div>
+            `).join('');
+            let offerRowsHtml = (cond.offerItems || []).map(it => pumpOfferRowHtml(it)).join('');
+            return `
+            <div class="pump-condition-block" data-cond-id="${cond.id}">
+                <div class="pc-header">
+                    <h3>🔧 工况 ${index + 1}</h3>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="removePumpCondition(this)">🗑️ 删除此工况</button>
+                </div>
+                <div class="pc-section-title">01 Operating Conditions / 工况信息</div>
+                <div class="pc-fields">${leftFieldsHtml}${rightFieldsHtml}</div>
+                <div class="pc-field" style="margin-top:8px;"><label>Input notes / 填写说明</label><textarea class="pc-oc" data-key="inputNotes" rows="2">${escapeHtml(oc.inputNotes || '')}</textarea></div>
+
+                <div class="pc-section-title">02 Proposed Configuration / 推荐方案</div>
+                <div class="pc-fields">${cfgFieldsHtml}</div>
+
+                <div class="pc-section-title">03 Offer / 报价</div>
+                <table class="pump-offer-table">
+                    <thead><tr><th style="width:5%">No.</th><th style="width:40%">Description / 产品及配置</th><th style="width:15%">Qty / 数量</th><th style="width:12%">成本价</th><th style="width:15%">Unit price / 单价</th><th style="width:15%">Amount / 金额</th><th style="width:5%"></th></tr></thead>
+                    <tbody class="pc-offer-body">${offerRowsHtml}</tbody>
+                </table>
+                <button type="button" class="btn btn-outline btn-sm" onclick="addPumpOfferRow(this)">➕ 添加产品行</button>
+            </div>`;
+        }
+
+        function pumpOfferRowHtml(it) {
+            it = it || {};
+            return `<tr>
+                <td class="seq-cell"></td>
+                <td><input type="text" class="pc-offer-description" value="${escapeHtml(it.description || '')}"></td>
+                <td><input type="text" class="pc-offer-qty" value="${escapeHtml(it.qty || '')}" oninput="updatePumpOfferAmount(this)"></td>
+                <td><input type="text" class="pc-offer-cost" value="${escapeHtml(it.cost || '')}" style="background:#fff8e6;" title="内部成本价（人民币），不会出现在导出的报价单里" oninput="updatePumpOfferCostPrice(this)" onblur="evaluatePumpFormulaIfNeeded(this); updatePumpOfferCostPrice(this);"></td>
+                <td><input type="text" class="pc-offer-price" value="${escapeHtml(it.price || '')}" oninput="updatePumpOfferAmount(this)" onblur="evaluatePumpFormulaIfNeeded(this)" title="可以直接打算式，比如 100/0.8+5"></td>
+                <td><input type="text" class="pc-offer-amount" value="${escapeHtml(it.amount || '')}" readonly style="background:#f8fafc;"></td>
+                <td><button type="button" class="del-row" onclick="let tb=this.closest('.pc-offer-body'); this.closest('tr').remove(); renumberPumpOfferRows(tb);">🗑️</button></td>
+            </tr>`;
+        }
+
+        function renderPumpConditions(conditions) {
+            let list = document.getElementById('pumpConditionsList');
+            list.innerHTML = '';
+            (conditions && conditions.length ? conditions : [makeEmptyPumpCondition()]).forEach((c, i) => {
+                list.insertAdjacentHTML('beforeend', pumpConditionBlockHtml(c, i));
+            });
+            list.querySelectorAll('.pc-offer-body').forEach(tb => renumberPumpOfferRows(tb));
+        }
+
+        function renumberPumpConditionHeaders() {
+            document.querySelectorAll('#pumpConditionsList .pump-condition-block').forEach((block, i) => {
+                block.querySelector('.pc-header h3').innerText = `🔧 工况 ${i + 1}`;
+            });
+        }
+
+        function addPumpCondition(cond) {
+            let list = document.getElementById('pumpConditionsList');
+            list.insertAdjacentHTML('beforeend', pumpConditionBlockHtml(cond || makeEmptyPumpCondition(), document.querySelectorAll('#pumpConditionsList .pump-condition-block').length));
+            let lastBlock = list.lastElementChild;
+            if (lastBlock) renumberPumpOfferRows(lastBlock.querySelector('.pc-offer-body'));
+        }
+
+        function removePumpCondition(btnEl) {
+            let blocks = document.querySelectorAll('#pumpConditionsList .pump-condition-block');
+            if (blocks.length <= 1) { showToast('至少要保留一个工况', 'error'); return; }
+            if (!confirm('删除这个工况（含它下面的方案和报价）？')) return;
+            btnEl.closest('.pump-condition-block').remove();
+            renumberPumpConditionHeaders();
+        }
+
+        function addPumpOfferRow(btnEl) {
+            let tbody = btnEl.closest('.pump-condition-block').querySelector('.pc-offer-body');
+            tbody.insertAdjacentHTML('beforeend', pumpOfferRowHtml());
+            renumberPumpOfferRows(tbody);
+        }
+
+        function renumberPumpOfferRows(tbody) {
+            if (!tbody) return;
+            tbody.querySelectorAll('tr').forEach((tr, i) => { tr.querySelector('.seq-cell').innerText = i + 1; });
+        }
+
+        function updatePumpOfferAmount(inputEl) {
+            let row = inputEl.closest('tr');
+            let price = parseFloat(row.querySelector('.pc-offer-price').value) || 0;
+            let qty = parseFloat(row.querySelector('.pc-offer-qty').value) || 0;
+            let amount = price * qty;
+            row.querySelector('.pc-offer-amount').value = amount ? amount.toFixed(2) : '';
+        }
+
+        function updatePumpOfferCostPrice(inputEl) {
+            let row = inputEl.closest('tr');
+            let cost = parseFloat(row.querySelector('.pc-offer-cost').value) || 0;
+            let priceInput = row.querySelector('.pc-offer-price');
+            if (cost > 0) {
+                let currency = getCurrencyValue();
+                let suggestedPrice;
+                if (currency === 'CNY') {
+                    suggestedPrice = cost / 0.8;
+                } else {
+                    let rate = parseFloat(document.getElementById('fExchangeRate').value) || 6;
+                    suggestedPrice = cost / 0.8 / rate;
+                }
+                priceInput.value = suggestedPrice.toFixed(2);
+                updatePumpOfferAmount(priceInput);
+            }
+        }
+
+        function evaluatePumpFormulaIfNeeded(inputEl) {
+            let val = inputEl.value.trim();
+            if (!val) return;
+            let expr = val.startsWith('=') ? val.slice(1).trim() : val;
+            if (!/[+\-*/()]/.test(expr)) return;
+            if (!/^[\d+\-*/(). ]+$/.test(expr)) {
+                showToast('公式里有不支持的字符，只能用数字和 + - * / ( )', 'error');
+                return;
+            }
+            try {
+                let result = Function('"use strict"; return (' + expr + ')')();
+                if (typeof result === 'number' && isFinite(result)) {
+                    inputEl.value = result.toFixed(2);
+                    updatePumpOfferAmount(inputEl);
+                } else {
+                    showToast('公式算不出有效数字', 'error');
+                }
+            } catch(e) {
+                showToast('公式格式不对，算不出来', 'error');
+            }
+        }
+
+        // 从界面上读出当前所有工况的数据（保存时用）
+        function getPumpConditionsFromForm() {
+            let blocks = document.querySelectorAll('#pumpConditionsList .pump-condition-block');
+            let conditions = [];
+            blocks.forEach(block => {
+                let oc = {};
+                block.querySelectorAll('.pc-oc').forEach(inp => { oc[inp.dataset.key] = inp.value.trim(); });
+                let cfg = {};
+                block.querySelectorAll('.pc-cfg').forEach(inp => { cfg[inp.dataset.key] = inp.value.trim(); });
+                let offerItems = [];
+                block.querySelectorAll('.pc-offer-body tr').forEach(tr => {
+                    let description = tr.querySelector('.pc-offer-description').value.trim();
+                    let cost = tr.querySelector('.pc-offer-cost').value.trim();
+                    let price = tr.querySelector('.pc-offer-price').value.trim();
+                    let qty = tr.querySelector('.pc-offer-qty').value.trim();
+                    let amount = tr.querySelector('.pc-offer-amount').value.trim();
+                    if (description || cost || price || qty || amount) offerItems.push({ description, cost, price, qty, amount });
+                });
+                conditions.push({ id: block.dataset.condId || genId(), operatingConditions: oc, proposedConfig: cfg, offerItems });
+            });
+            return conditions;
+        }
+
+        // 把某张磁力泵报价单的所有工况下的报价明细拍扁成一个数组，给列表搜索/预览用
+        function flattenPumpOfferItems(q) {
+            let conditions = getPumpConditionsForQuote(q);
+            let flat = [];
+            conditions.forEach(c => { (c.offerItems || []).forEach(it => flat.push(it)); });
+            return flat;
+        }
 
         let quotes = [];
         let customers = [];
@@ -752,17 +1019,30 @@ OEM/ODM: Available`,
         // ====== 货品明细：根据产品系列动态渲染不同列 ======
         function selectSeries(series, keepItems) {
             if (currentSeries === series) return;
-            if (!keepItems && document.getElementById('itemsTableBody').children.length > 0) {
-                if (!confirm('切换产品系列会清空当前已填写的货品明细，确定切换吗？')) return;
+            let hasExistingContent = currentSeries === '微型磁力泵'
+                ? document.getElementById('pumpConditionsList').children.length > 0
+                : document.getElementById('itemsTableBody').children.length > 0;
+            if (!keepItems && hasExistingContent) {
+                if (!confirm('切换产品系列会清空当前已填写的内容，确定切换吗？')) return;
             }
             currentSeries = series;
             document.querySelectorAll('.series-tab').forEach(t => t.classList.toggle('active', t.dataset.series === series));
-            renderItemsTableHead();
-            document.getElementById('itemsTableBody').innerHTML = '';
             if (!document.getElementById('fRemark').dataset.userEdited) {
                 document.getElementById('fRemark').value = SERIES_CONFIG[series].defaultRemark;
             }
-            addItemRow();
+            if (series === '微型磁力泵') {
+                document.getElementById('genericItemsWrapper').classList.add('hidden');
+                document.getElementById('pumpConditionsWrapper').classList.remove('hidden');
+                document.getElementById('itemsTableBody').innerHTML = '';
+                if (!keepItems) renderPumpConditions([]);
+            } else {
+                document.getElementById('pumpConditionsWrapper').classList.add('hidden');
+                document.getElementById('genericItemsWrapper').classList.remove('hidden');
+                document.getElementById('pumpConditionsList').innerHTML = '';
+                renderItemsTableHead();
+                document.getElementById('itemsTableBody').innerHTML = '';
+                addItemRow();
+            }
         }
 
         function renderItemsTableHead() {
@@ -994,8 +1274,12 @@ OEM/ODM: Available`,
                 document.getElementById('fExchangeRate').value = q.exchangeRate || '6';
                 document.getElementById('fInternalNote').value = q.internalNote || '';
                 selectSeries(q.series, true);
-                document.getElementById('itemsTableBody').innerHTML = '';
-                (q.items || []).forEach(it => addItemRow(it));
+                if (q.series === '微型磁力泵') {
+                    renderPumpConditions(getPumpConditionsForQuote(q));
+                } else {
+                    document.getElementById('itemsTableBody').innerHTML = '';
+                    (q.items || []).forEach(it => addItemRow(it));
+                }
                 document.getElementById('fRemark').value = q.remark || SERIES_CONFIG[q.series].defaultRemark;
                 document.getElementById('fRemark').dataset.userEdited = '1';
                 document.getElementById('deleteQuoteBtn').style.display = 'inline-flex';
@@ -1028,8 +1312,17 @@ OEM/ODM: Available`,
             let customerCompany = document.getElementById('fCustomerCompany').value.trim();
             if (!customerCompany) { showToast('请填写客户名称', 'error'); return; }
             if (!currentSeries) { showToast('请选择产品系列', 'error'); return; }
-            let items = getItemsFromForm();
-            if (items.length === 0) { showToast('请至少填写一条货品明细', 'error'); return; }
+
+            let items = [];
+            let conditions = [];
+            if (currentSeries === '微型磁力泵') {
+                conditions = getPumpConditionsFromForm();
+                let hasAnyOffer = conditions.some(c => (c.offerItems || []).some(it => it.description));
+                if (!hasAnyOffer) { showToast('请至少给一个工况填一条报价明细（Description）', 'error'); return; }
+            } else {
+                items = getItemsFromForm();
+                if (items.length === 0) { showToast('请至少填写一条货品明细', 'error'); return; }
+            }
 
             let quoteNo = currentQuoteNo || genQuoteNo();
             let data = {
@@ -1041,6 +1334,7 @@ OEM/ODM: Available`,
                 currency: getCurrencyValue(),
                 exchangeRate: document.getElementById('fExchangeRate').value.trim() || '6',
                 items,
+                conditions,
                 remark: document.getElementById('fRemark').value,
                 internalNote: document.getElementById('fInternalNote').value.trim()
             };
@@ -1090,9 +1384,30 @@ OEM/ODM: Available`,
 
         // ====== 列表渲染 ======
         function itemsHay(q) {
+            if (q.series === '微型磁力泵') {
+                let conditions = getPumpConditionsForQuote(q);
+                let parts = [];
+                conditions.forEach(c => {
+                    (c.offerItems || []).forEach(it => parts.push(it.description || ''));
+                    parts.push(Object.values(c.proposedConfig || {}).join(' '));
+                    parts.push(Object.values(c.operatingConditions || {}).join(' '));
+                });
+                return parts.join(' ');
+            }
             return (q.items || []).map(it => `${it.name || ''} ${it.spec || ''} ${it.keySpec || ''} ${it.code || ''}`).join(' ');
         }
         function itemPreviewHtml(q, kw) {
+            if (q.series === '微型磁力泵') {
+                let flat = flattenPumpOfferItems(q);
+                if (!flat.length) return '';
+                let words = kw ? kw.split(/\s+/).filter(Boolean) : [];
+                let line = it => `${it.description || ''}`.toLowerCase();
+                let hit = words.length ? flat.filter(it => words.some(w => line(it).includes(w))) : [];
+                let show = (hit.length ? hit : flat).slice(0, 4);
+                let rows = show.map(it => `<div>${escapeHtml(it.description || '')}</div>`).join('');
+                let more = (hit.length ? hit.length : flat.length) > show.length ? `<div>…等${hit.length ? hit.length : flat.length}条</div>` : '';
+                return `<div style="font-size:0.75rem;color:#64748b;margin-top:4px;line-height:1.5;">${rows}${more}</div>`;
+            }
             let items = q.items || [];
             if (!items.length) return '';
             let words = kw ? kw.split(/\s+/).filter(Boolean) : [];
@@ -1131,7 +1446,7 @@ OEM/ODM: Available`,
                         <td>—</td>
                     </tr>`;
                 }
-                let itemCount = (q.items || []).length;
+                let itemCount = q.series === '微型磁力泵' ? flattenPumpOfferItems(q).length : (q.items || []).length;
                 return `<tr>
                     <td><span class="order-link" onclick="openQuoteDetail('${q.quoteNo}')">${q.quoteNo}</span></td>
                     <td><span class="badge badge-series">${escapeHtml(q.series)}</span></td>
@@ -1191,6 +1506,14 @@ OEM/ODM: Available`,
             if (!kw) return [];
             let rows = [];
             quotes.filter(q => !q.deleted && (!customerCompany || q.customerCompany === customerCompany)).forEach(q => {
+                if (q.series === '微型磁力泵') {
+                    flattenPumpOfferItems(q).forEach(it => {
+                        let name = (it.description || '').toLowerCase();
+                        if (!name.includes(kw)) return;
+                        rows.push({ date: q.quoteDate, quoteNo: q.quoteNo, customerCompany: q.customerCompany, series: q.series, name: it.description, spec: '', price: it.price, currency: q.currency || 'USD' });
+                    });
+                    return;
+                }
                 (q.items || []).forEach(it => {
                     let name = (it.name || '').toLowerCase();
                     if (!name.includes(kw)) return;
@@ -1440,12 +1763,9 @@ JSON格式：
                 let extraNote = [tolerance ? `公差:${tolerance}` : '', workpieceMaterial ? `加工材料:${workpieceMaterial}` : '', other].filter(Boolean).join('；');
 
                 if (series === '微型磁力泵') {
-                    draftItems.push({
-                        name, qty, price: '',
-                        spec: material || coating ? `Material: ${material}${coating ? '\nCoating: ' + coating : ''}` : '',
-                        specSub: { material, interface: '', accessories: coating },
-                        keySpec: extraNote, keySpecSub: { medium: '', flow: '', pressure: '', viscosity: '', particle: '', temperature: '', additionalCondition: extraNote }
-                    });
+                    // 磁力泵现在是"工况+方案+报价"结构，AI只负责把识别到的型号预填进Offer表的Description，
+                    // 工况(Operating Conditions)和方案(Proposed Configuration)字段比较专业，还是需要你自己核对原文手动填
+                    draftItems.push({ description: material || coating ? `${name}（${[material, coating].filter(Boolean).join(' / ')}）` : name, qty, price: '', cost: '', amount: '', pumpNote: extraNote });
                 } else if (series === '塑料切粒刀') {
                     draftItems.push({ name, spec: spec || extraNote, material, compatibleSystem: extraNote, price: '', moq: '', qty: '', amount: '' });
                 } else {
@@ -1458,8 +1778,16 @@ JSON格式：
             closeModal('aiRfqModal');
             await openQuoteDetail(null); // 走原有的"新建报价单"流程，不改变现有数据结构，价格栏完全空着等你填
             selectSeries(series, true);
-            document.getElementById('itemsTableBody').innerHTML = '';
-            draftItems.forEach(it => addItemRow(it));
+            if (series === '微型磁力泵') {
+                let cond = makeEmptyPumpCondition();
+                cond.offerItems = draftItems.map(it => ({ description: it.description, cost: '', price: '', qty: it.qty || '', amount: '' }));
+                let noteParts = draftItems.map(it => it.pumpNote).filter(Boolean);
+                if (noteParts.length) cond.operatingConditions.otherNeeds = noteParts.join('；');
+                renderPumpConditions([cond]);
+            } else {
+                document.getElementById('itemsTableBody').innerHTML = '';
+                draftItems.forEach(it => addItemRow(it));
+            }
             document.getElementById('fCustomerCompany').value = customer;
             document.getElementById('fCustomerCountry').value = country;
             document.getElementById('fInternalNote').value = '来自AI询价助手解析的草稿，价格待确认后保存（AI标注过不确定的字段请务必再核对一遍原文）';
@@ -1471,6 +1799,7 @@ JSON格式：
             if (!currentQuoteNo) { showToast('请先保存报价单再导出', 'error'); return; }
             let q = quotes.find(x => x.quoteNo === currentQuoteNo);
             if (!q) { showToast('未找到报价单数据', 'error'); return; }
+            if (q.series === '微型磁力泵') { exportPumpQuote(q); return; }
             let cfg = SERIES_CONFIG[q.series];
             let items = q.items || [];
             let exportColumns = cfg.columns.filter(c => !c.internalOnly); // 成本价这类内部字段不出现在导出的报价单里
@@ -1599,6 +1928,184 @@ JSON格式：
             let ws = XLSX.utils.aoa_to_sheet(aoa);
             ws['!merges'] = merges;
             ws['!cols'] = [{ wch: 6 }].concat(exportColumns.map(c => ({ wch: c.excelWidth || 16 })));
+            ws['!rows'] = aoa.map((row, i) => ({ hpx: rowHeights[i] || 18 }));
+
+            let wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '报价单');
+            XLSX.writeFile(wb, `报价单_${q.quoteNo}.xlsx`);
+            showToast('报价单已导出，用Excel打开后可直接"文件→导出→创建PDF"另存为PDF');
+        }
+
+        // ====== 磁力泵专用导出：每个工况一个独立区块（01工况/02方案/03报价），纵向依次排列在同一份文件里 ======
+        function exportPumpQuote(q) {
+            let cfg = SERIES_CONFIG['微型磁力泵'];
+            let conditions = getPumpConditionsForQuote(q);
+            let colCount = 6; // col0:No/label1  col1-2:Description或value1(合并)  col3:Qty或label2  col4-5:Unit price+Amount或value2(合并，仅单元格布局用)
+
+            const thin = { style: 'thin', color: { rgb: '000000' } };
+            const border = { top: thin, bottom: thin, left: thin, right: thin };
+            const titleFont = { name: 'Arial', sz: 16, bold: true };
+            const headFont = { name: 'Arial', sz: 10, bold: true, color: { rgb: 'FFFFFF' } };
+            const sectionFont = { name: 'Arial', sz: 11, bold: true, color: { rgb: 'FFFFFF' } };
+            const normalFont = { name: 'Arial', sz: 10 };
+            const boldFont = { name: 'Arial', sz: 10, bold: true };
+            const centerAlign = { horizontal: 'center', vertical: 'center', wrapText: true };
+            const leftAlign = { horizontal: 'left', vertical: 'center', wrapText: true };
+            const rightAlign = { horizontal: 'right', vertical: 'center', wrapText: true };
+            const orangeFill = { fill: { patternType: 'solid', fgColor: { rgb: 'ED7D31' } } };
+            const navyFill = { fill: { patternType: 'solid', fgColor: { rgb: '0E4B6E' } } };
+            const creamFill = { fill: { patternType: 'solid', fgColor: { rgb: 'FFF8E6' } } };
+            const grayFill = { fill: { patternType: 'solid', fgColor: { rgb: 'D9D9D9' } } };
+
+            let aoa = [];
+            let merges = [];
+            let rowHeights = {};
+            function addRow(cells, heightPx) {
+                aoa.push(cells);
+                let idx = aoa.length - 1;
+                if (heightPx) rowHeights[idx] = heightPx;
+                return idx;
+            }
+            function cell(v, font, align, brd, extra) {
+                let s = { font: font || normalFont, alignment: align || leftAlign };
+                if (brd) s.border = brd;
+                if (extra) Object.assign(s, extra);
+                return { v: v == null ? '' : v, t: 's', s };
+            }
+            function fillRow(n) { return new Array(n).fill(''); }
+            function estimateLines(text, charsPerLine) {
+                if (!text) return 1;
+                let manualLines = String(text).split('\n');
+                let total = 0;
+                manualLines.forEach(l => { total += Math.max(1, Math.ceil(l.length / charsPerLine)); });
+                return Math.max(1, total);
+            }
+            // 一行放两组"标签+值"：label1(col0) value1(col1-2合并) label2(col3) value2(col4-5合并)
+            function labelValueRow(label1, val1, label2, val2) {
+                let lines1 = estimateLines(val1, 20), lines2 = estimateLines(val2, 18);
+                let h = Math.max(20, Math.max(lines1, lines2) * 14 + 8);
+                let r = addRow([
+                    cell(label1, boldFont, leftAlign),
+                    cell(val1, normalFont, leftAlign, null, creamFill), '',
+                    cell(label2 || '', boldFont, leftAlign),
+                    cell(label2 ? val2 : '', normalFont, leftAlign, null, creamFill), ''
+                ], h);
+                merges.push({ s: { r, c: 1 }, e: { r, c: 2 } });
+                merges.push({ s: { r, c: 4 }, e: { r, c: 5 } });
+                return r;
+            }
+            // 一行放一组"标签+宽值"：label(col0) value(col1-5合并，跨5列)
+            function wideLabelValueRow(label, val) {
+                let lines = estimateLines(val, 70);
+                let h = Math.max(20, lines * 14 + 8);
+                let r = addRow([cell(label, boldFont, leftAlign), cell(val, normalFont, leftAlign, null, creamFill), ...fillRow(4)], h);
+                merges.push({ s: { r, c: 1 }, e: { r, c: 5 } });
+                return r;
+            }
+            function sectionBar(text) {
+                let r = addRow([cell(text, sectionFont, leftAlign, null, navyFill), ...fillRow(colCount - 1)], 22);
+                for (let c = 1; c < colCount; c++) aoa[r][c] = cell('', sectionFont, leftAlign, null, navyFill);
+                merges.push({ s: { r, c: 0 }, e: { r, c: colCount - 1 } });
+                return r;
+            }
+
+            // 标题
+            let rTitle = addRow([cell('QUOTATION', titleFont, centerAlign), ...fillRow(colCount - 1)], 28);
+            merges.push({ s: { r: rTitle, c: 0 }, e: { r: rTitle, c: colCount - 1 } });
+
+            // 表头信息（供应商/联系人/邮箱 左边；日期/单号/客户/国家 右边）
+            let rH1 = addRow([cell(`Supplier: ${SUPPLIER.name}`, boldFont, leftAlign), '', '', cell(`Date: ${q.quoteDate}`, boldFont, leftAlign), '', ''], 20);
+            merges.push({ s: { r: rH1, c: 0 }, e: { r: rH1, c: 2 } });
+            merges.push({ s: { r: rH1, c: 3 }, e: { r: rH1, c: 5 } });
+            let rH2 = addRow([cell(`Contact: ${SUPPLIER.contact}`, boldFont, leftAlign), '', '', cell(`Quotation No.: ${q.quoteNo}`, boldFont, leftAlign), '', ''], 20);
+            merges.push({ s: { r: rH2, c: 0 }, e: { r: rH2, c: 2 } });
+            merges.push({ s: { r: rH2, c: 3 }, e: { r: rH2, c: 5 } });
+            let rH3 = addRow([cell(`Email: ${SUPPLIER.email}`, boldFont, leftAlign), '', '', cell(`Customer: ${q.customerCompany}`, boldFont, leftAlign), '', ''], 20);
+            merges.push({ s: { r: rH3, c: 0 }, e: { r: rH3, c: 2 } });
+            merges.push({ s: { r: rH3, c: 3 }, e: { r: rH3, c: 5 } });
+            let rH4 = addRow(['', '', '', cell(`Country: ${q.customerCountry || ''}`, boldFont, leftAlign), '', ''], 20);
+            merges.push({ s: { r: rH4, c: 0 }, e: { r: rH4, c: 2 } });
+            merges.push({ s: { r: rH4, c: 3 }, e: { r: rH4, c: 5 } });
+            addRow(fillRow(colCount), 8);
+
+            let currency = q.currency || 'USD';
+
+            conditions.forEach((c, idx) => {
+                if (conditions.length > 1) {
+                    let rCond = addRow([cell(`Condition ${idx + 1} / 工况 ${idx + 1}`, { name: 'Arial', sz: 12, bold: true, color: { rgb: 'FFFFFF' } }, leftAlign, null, orangeFill), ...fillRow(colCount - 1)], 24);
+                    for (let c2 = 1; c2 < colCount; c2++) aoa[rCond][c2] = cell('', normalFont, leftAlign, null, orangeFill);
+                    merges.push({ s: { r: rCond, c: 0 }, e: { r: rCond, c: colCount - 1 } });
+                }
+
+                // 01 Operating Conditions
+                sectionBar('01  Operating Conditions / 工况信息');
+                let oc = c.operatingConditions || {};
+                let maxLen = Math.max(PUMP_OPERATING_FIELDS_LEFT.length, PUMP_OPERATING_FIELDS_RIGHT.length);
+                for (let i = 0; i < maxLen; i++) {
+                    let lf = PUMP_OPERATING_FIELDS_LEFT[i];
+                    let rf = PUMP_OPERATING_FIELDS_RIGHT[i];
+                    labelValueRow(lf ? lf.label : '', lf ? (oc[lf.key] || '') : '', rf ? rf.label : '', rf ? (oc[rf.key] || '') : '');
+                }
+                wideLabelValueRow('Input notes / 填写说明', oc.inputNotes || '');
+                addRow(fillRow(colCount), 6);
+
+                // 02 Proposed Configuration
+                sectionBar('02  Proposed Configuration / 推荐方案');
+                let pc = c.proposedConfig || {};
+                PUMP_CONFIG_FIELDS.forEach(f => { wideLabelValueRow(f.label, pc[f.key] || ''); });
+                addRow(fillRow(colCount), 6);
+
+                // 03 Offer
+                sectionBar('03  Offer / 报价');
+                let offerHeaderCells = [
+                    cell('No.', headFont, centerAlign, border, orangeFill),
+                    cell('Description / 产品及配置', headFont, centerAlign, border, orangeFill), '',
+                    cell('Qty / 数量', headFont, centerAlign, border, orangeFill),
+                    cell(`Unit price (${currency})`, headFont, centerAlign, border, orangeFill),
+                    cell(`Amount (${currency})`, headFont, centerAlign, border, orangeFill)
+                ];
+                let rOfferHead = addRow(offerHeaderCells, 26);
+                merges.push({ s: { r: rOfferHead, c: 1 }, e: { r: rOfferHead, c: 2 } });
+
+                (c.offerItems || []).forEach((it, i) => {
+                    let lines = estimateLines(it.description, 40);
+                    let r = addRow([
+                        cell(i + 1, normalFont, centerAlign, border),
+                        cell(it.description, normalFont, leftAlign, border), '',
+                        cell(it.qty, normalFont, centerAlign, border),
+                        cell(it.price, normalFont, rightAlign, border),
+                        cell(it.amount, normalFont, rightAlign, border)
+                    ], Math.max(20, lines * 15 + 6));
+                    merges.push({ s: { r, c: 1 }, e: { r, c: 2 } });
+                });
+
+                addRow(fillRow(colCount), 14);
+            });
+
+            // Remark
+            let rRemark = addRow([cell('Remark:', boldFont, leftAlign), ...fillRow(colCount - 1)], 18);
+            merges.push({ s: { r: rRemark, c: 0 }, e: { r: rRemark, c: colCount - 1 } });
+            let remarkText = q.remark || '';
+            let remarkLineCount = remarkText.split('\n').length;
+            let rRemarkBody = addRow([cell(remarkText, normalFont, leftAlign), ...fillRow(colCount - 1)], remarkLineCount * 15 + 10);
+            merges.push({ s: { r: rRemarkBody, c: 0 }, e: { r: rRemarkBody, c: colCount - 1 } });
+
+            addRow(fillRow(colCount), 8);
+            let rImg = addRow([cell('Image', boldFont, centerAlign, null, grayFill), ...fillRow(colCount - 1)], 18);
+            merges.push({ s: { r: rImg, c: 0 }, e: { r: rImg, c: colCount - 1 } });
+            for (let i = 0; i < 8; i++) addRow(fillRow(colCount), 20);
+
+            // Why Choose Us
+            let rWhy = addRow([cell('Why Choose Us', boldFont, leftAlign), ...fillRow(colCount - 1)], 18);
+            merges.push({ s: { r: rWhy, c: 0 }, e: { r: rWhy, c: colCount - 1 } });
+            cfg.whyChooseUs.forEach((line, i) => {
+                let r = addRow([cell(`${i + 1}.${line}`, normalFont, leftAlign), ...fillRow(colCount - 1)], 16);
+                merges.push({ s: { r: r, c: 0 }, e: { r: r, c: colCount - 1 } });
+            });
+
+            let ws = XLSX.utils.aoa_to_sheet(aoa);
+            ws['!merges'] = merges;
+            ws['!cols'] = [{ wch: 8 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 18 }];
             ws['!rows'] = aoa.map((row, i) => ({ hpx: rowHeights[i] || 18 }));
 
             let wb = XLSX.utils.book_new();
